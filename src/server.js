@@ -1,4 +1,3 @@
-server.js v13.10 — white-label no painel
 /**
  * NEON CRM — servidor v13.10 (multi-provedor WhatsApp: Evolution API | Uazapi).
  * Núcleo: contatos, deals, inbox WhatsApp, AI Gateway (OpenAI),
