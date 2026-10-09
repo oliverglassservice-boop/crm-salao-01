@@ -1,5 +1,5 @@
 /**
- * NEON CRM — servidor v13.10 (multi-provedor WhatsApp: Evolution API | Uazapi).
+ * NEON CRM — servidor v13.10.1 (multi-provedor WhatsApp: Evolution API | Uazapi).
  * Núcleo: contatos, deals, inbox WhatsApp, AI Gateway (OpenAI),
  * Prospecção Ativa (Google Places + disparo com guardrails).
  * v11: login no painel (Basic Auth) + persona de vendas + guarda de horário.
@@ -55,6 +55,11 @@
  *       cores (primária, sidebar, fundo), mensagem de boas-vindas e
  *       persona extra da IA, tudo editável na aba Configurações e
  *       guardado na tabela app_settings (GET/POST /api/branding).
+ * v13.10.1: TRANCO DE DESENVOLVEDOR — salvar marca (POST /api/branding)
+ *       exige a senha do desenvolvedor (DEV_PASS no Environment) no header
+ *       X-Dev-Pass; a rota /api/branding/unlock valida a senha sem salvar.
+ *       O painel do cliente continua LENDO a marca (GET) para se pintar —
+ *       mas NÃO edita: quem tem PANEL_PASS vê, quem tem DEV_PASS muda.
  */
 import express from 'express';
 import path from 'path';
@@ -101,6 +106,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
    webhook ficam sempre livres (monitoramento e a API de WhatsApp não têm login). */
 const PANEL_USER = process.env.PANEL_USER || '';
 const PANEL_PASS = process.env.PANEL_PASS || '';
+// v13.10.1: senha de DESENVOLVEDOR — destrava a EDIÇÃO da marca no painel
+// (nome, cores, boas-vindas, persona). É OUTRA senha: quem tem PANEL_PASS
+// vê o painel pintado; só quem tem DEV_PASS muda a roupa.
+const DEV_PASS = process.env.DEV_PASS || '';
 function requirePanelAuth(req, res, next) {
   if (!PANEL_USER || !PANEL_PASS) return next();
   const hdr = req.headers.authorization || '';
@@ -196,6 +205,9 @@ app.get('/api/branding', async (_req, res) => {
 });
 app.post('/api/branding', async (req, res) => {
   try {
+    // v13.10.1: TRANCO — sem a senha de desenvolvedor, ninguém salva marca
+    if (!DEV_PASS) return res.status(500).json({ error: 'DEV_PASS não configurada no Environment — edição de marca travada' });
+    if (req.headers['x-dev-pass'] !== DEV_PASS) return res.status(401).json({ error: 'senha de desenvolvedor incorreta' });
     const body = req.body || {};
     for (const k of BRAND_KEYS) {
       if (body[k] === undefined) continue;
@@ -208,6 +220,14 @@ app.post('/api/branding', async (req, res) => {
     console.log('[branding] ✅ marca atualizada pelo painel');
     res.json({ ok: true, branding: await loadBranding() });
   } catch (e) { res.status(500).json({ error: String(e.message) }); }
+});
+
+/** v13.10.1: valida a senha do desenvolvedor SEM salvar nada — o painel
+ *  chama ao abrir a aba Configurações (destrava a edição na sessão). */
+app.post('/api/branding/unlock', async (req, res) => {
+  if (!DEV_PASS) return res.status(500).json({ error: 'DEV_PASS não configurada no Environment' });
+  if (req.headers['x-dev-pass'] !== DEV_PASS) return res.status(401).json({ error: 'senha incorreta' });
+  res.json({ ok: true });
 });
 
 /* ---------------- API: contatos ---------------- */
@@ -736,7 +756,7 @@ setInterval(async () => {
   } catch (e) { console.error('[lembrete] erro no worker:', e.message); }
 }, 5 * 60 * 1000);
 
-console.log(`[boot] NEON CRM v13.10 no ar | provider=${PROVIDER} | AUTO_RESPOND=${process.env.AUTO_RESPOND || '(NÃO definido!)'} | login_painel=${PANEL_USER && PANEL_PASS ? 'ATIVO' : 'desativado'} | janela_IA=${AI_WINDOW[0]}h-${AI_WINDOW[1]}h | opt-out: LIGADO (palavras-chave) | escalação: LIGADA | IA paralela + digitando... + tradutor + embaixador: LIGADOS`);
+console.log(`[boot] NEON CRM v13.10.1 no ar | provider=${PROVIDER} | AUTO_RESPOND=${process.env.AUTO_RESPOND || '(NÃO definido!)'} | login_painel=${PANEL_USER && PANEL_PASS ? 'ATIVO' : 'desativado'} | janela_IA=${AI_WINDOW[0]}h-${AI_WINDOW[1]}h | opt-out: LIGADO (palavras-chave) | escalação: LIGADA | IA paralela + digitando... + tradutor + embaixador: LIGADOS | tranco_dev=${DEV_PASS ? 'ATIVO' : 'FECHADO (DEV_PASS ausente!)'}`);
 app.listen(PORT, () => console.log(`NEON CRM no ar em ${process.env.APP_URL || 'http://localhost:' + PORT}`));
 
 process.on('SIGTERM', () => { pool.end().then(() => process.exit(0)); });
