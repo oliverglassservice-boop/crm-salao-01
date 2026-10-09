@@ -123,7 +123,7 @@ input[type=color].cfg{width:44px;height:32px;padding:0;border:1px solid var(--li
     <button data-v="metricas"><i>📊</i> Métricas</button>
     <button data-v="config" id="navConfig" style="display:none"><i>⚙️</i> Configurações</button>
   </nav>
-  <div class="status"><span class="ok" id="health">● conectando…</span><span id="brandVersion">v13.10.1 · NEON CRM</span></div>
+  <div class="status"><span class="ok" id="health">● conectando…</span><span id="brandVersion">v13.10.2 · NEON CRM</span></div>
 </aside>
 <div class="maincol">
 <div class="bar">
@@ -580,8 +580,9 @@ setInterval(()=>{ try{ loadStatus(); loadMetrics(); }catch(e){} }, 60000);
 })();
 </script>
 <script>
-/* v13.10.1: WHITE-LABEL + TRANCO DE DEV — a marca veste o painel e a IA;
-   a aba de edição só aparece para quem tem a senha do desenvolvedor. */
+/* v13.10.2: WHITE-LABEL + TRANCO DE DEV + FIX DAS CORES — o CSS da marca
+   agora nasce dentro de :root{...} (variável solta fora de seletor é
+   inválida e o navegador descartava — por isso as cores não pegavam). */
 (function(){
   const $ = (s) => document.querySelector(s);
   const F = [['business_name','cfg-business'],['attendant_name','cfg-attendant'],
@@ -592,17 +593,17 @@ setInterval(()=>{ try{ loadStatus(); loadMetrics(); }catch(e){} }, 60000);
   function apply(b){
     if (b.business_name){
       const l=$('#brandLogoText'); if(l) l.textContent=b.business_name.toUpperCase();
-      const v=$('#brandVersion'); if(v) v.textContent='v13.10.1 · '+b.business_name;
+      const v=$('#brandVersion'); if(v) v.textContent='v13.10.2 · '+b.business_name;
       const f=$('#brandFooter'); if(f) f.textContent=b.business_name+' — painel de atendimento';
       document.title=b.business_name+' · Atendimento';
     }
     const cs=$('#brandCss');
-    if (cs) cs.textContent = [
+    if (cs) cs.textContent = ':root{' + [
       b.brand_ai ? '--ai:'+b.brand_ai+';--ai-deep:'+b.brand_ai+';' : '',
       b.brand_side ? '--side:'+b.brand_side+';' : '',
       b.brand_side2 ? '--side2:'+b.brand_side2+';' : '',
       b.brand_bg ? '--bg:'+b.brand_bg+';' : ''
-    ].join('');
+    ].join('') + '}';
     F.forEach(([k,id])=>{ const e=$('#'+id); if(e) e.value=b[k]||''; });
     const D={ai:['brand_ai','#7C5CFF'],side:['brand_side','#17133A'],side2:['brand_side2','#231C55'],bg:['brand_bg','#F4F2FB']};
     Object.keys(D).forEach((x)=>{ const e=$('#cfg-'+x); if(e){ e.value=b[D[x][0]]||D[x][1]; const h=$('#cfg-'+x+'-hex'); if(h) h.value=e.value; } });
