@@ -121,9 +121,9 @@ input[type=color].cfg{width:44px;height:32px;padding:0;border:1px solid var(--li
     <button data-v="wa"><i>💬</i> WhatsApp</button>
     <button data-v="prosp"><i>🧲</i> Prospecção</button>
     <button data-v="metricas"><i>📊</i> Métricas</button>
-    <button data-v="config"><i>⚙️</i> Configurações</button>
+    <button data-v="config" id="navConfig" style="display:none"><i>⚙️</i> Configurações</button>
   </nav>
-  <div class="status"><span class="ok" id="health">● conectando…</span><span id="brandVersion">v13.10 · NEON CRM</span></div>
+  <div class="status"><span class="ok" id="health">● conectando…</span><span id="brandVersion">v13.10.1 · NEON CRM</span></div>
 </aside>
 <div class="maincol">
 <div class="bar">
@@ -580,8 +580,8 @@ setInterval(()=>{ try{ loadStatus(); loadMetrics(); }catch(e){} }, 60000);
 })();
 </script>
 <script>
-/* v13.10: WHITE-LABEL — a marca salva na aba Configurações veste o painel
-   (logo, cores, versão, rodapé) e a IA (via /api/branding → app_settings). */
+/* v13.10.1: WHITE-LABEL + TRANCO DE DEV — a marca veste o painel e a IA;
+   a aba de edição só aparece para quem tem a senha do desenvolvedor. */
 (function(){
   const $ = (s) => document.querySelector(s);
   const F = [['business_name','cfg-business'],['attendant_name','cfg-attendant'],
@@ -592,7 +592,7 @@ setInterval(()=>{ try{ loadStatus(); loadMetrics(); }catch(e){} }, 60000);
   function apply(b){
     if (b.business_name){
       const l=$('#brandLogoText'); if(l) l.textContent=b.business_name.toUpperCase();
-      const v=$('#brandVersion'); if(v) v.textContent='v13.10 · '+b.business_name;
+      const v=$('#brandVersion'); if(v) v.textContent='v13.10.1 · '+b.business_name;
       const f=$('#brandFooter'); if(f) f.textContent=b.business_name+' — painel de atendimento';
       document.title=b.business_name+' · Atendimento';
     }
@@ -611,6 +611,29 @@ setInterval(()=>{ try{ loadStatus(); loadMetrics(); }catch(e){} }, 60000);
     const p=$('#cfg-'+x), h=$('#cfg-'+x+'-hex');
     if(p&&h){ p.addEventListener('input',()=>h.value=p.value); h.addEventListener('input',()=>p.value=h.value); }
   });
+  // v13.10.1: TRANCO DE DESENVOLVEDOR — a aba nasce ESCONDIDA; destrava
+  // pelo link do painel com #config (pergunta a senha e valida no servidor).
+  let devPw = sessionStorage.getItem('devPw') || '';
+  const navConfig = $('#navConfig');
+  function revealDev(){ if (navConfig) navConfig.style.display=''; }
+  if (devPw) revealDev();
+  async function tryUnlock(pw){
+    const r = await fetch('/api/branding/unlock',{method:'POST',headers:{'Content-Type':'application/json','X-Dev-Pass':pw||''},body:'{}'});
+    return r.ok;
+  }
+  if (location.hash==='#config' && !devPw){
+    (async ()=>{
+      const pw = prompt('🔒 Senha de desenvolvedor — aba Configurações:');
+      if (pw === null) return;
+      if (await tryUnlock(pw)){
+        devPw = pw; sessionStorage.setItem('devPw', devPw);
+        revealDev();
+        navConfig.click();
+      } else {
+        alert('Senha incorreta — ou DEV_PASS ainda não configurada no Environment (Save + Restart).');
+      }
+    })();
+  }
   fetch('/api/branding').then(r=>r.json()).then(apply).catch(()=>{});
   const btn=$('#cfgSave');
   if (btn) btn.onclick = async () => {
@@ -618,8 +641,10 @@ setInterval(()=>{ try{ loadStatus(); loadMetrics(); }catch(e){} }, 60000);
     const body={};
     F.forEach(([k,id])=>{ const e=$('#'+id); if(e) body[k]=e.value.trim(); });
     try {
-      const j = await fetch('/api/branding',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}).then(r=>r.json());
-      if (j.ok){ apply(j.branding||body); s.textContent='✓ marca salva — painel e IA já estão vestindo a roupa nova'; }
+      const rSave = await fetch('/api/branding',{method:'POST',headers:{'Content-Type':'application/json','X-Dev-Pass':devPw},body:JSON.stringify(body)});
+      const j = await rSave.json().catch(()=>({}));
+      if (rSave.status === 401) s.textContent='🔒 senha de desenvolvedor necessária — abra o painel pelo link com #config';
+      else if (j.ok){ apply(j.branding||body); s.textContent='✓ marca salva — painel e IA já estão vestindo a roupa nova'; }
       else s.textContent='erro: '+(j.error||'?');
     } catch(e){ s.textContent='erro: '+e.message; }
   };
