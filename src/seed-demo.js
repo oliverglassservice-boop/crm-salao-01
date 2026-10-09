@@ -1,6 +1,5 @@
-seed-demo v1.0 — 5 clientes-demo do segmento salão
 /**
- * NEON CRM — seed-demo.js v1.0 (STUDIO BELLA DONNA — vitrine salão de beleza)
+ * NEON CRM — seed-demo.js v1.1 (STUDIO BELLA DONNA — vitrine salão de beleza)
  * Propósito: povoar o painel com 5 clientes-demo do segmento SALÃO — funil
  * cheio, conversas de WhatsApp realistas e agenda confirmada para a venda.
  *
@@ -13,6 +12,8 @@ seed-demo v1.0 — 5 clientes-demo do segmento salão
  * (números reservados 5579999990001-0005 — nunca toca cliente real),
  * COERENTE com a persona (preço só quando pedem, um serviço por mensagem,
  * zero 💜, sem barreira de tempo na oferta de horário).
+ * v1.1: a tabela message_embeddings é OPCIONAL (a migrate do app a pula
+ *   quando a extensão vector não existe) — o seed NUNCA depende dela.
  */
 
 import { query, pool } from './db.js';
@@ -163,6 +164,12 @@ const DEMO = [
 
 const chatId = (w) => `${w}@s.whatsapp.net`;
 
+/** v1.1: a tabela message_embeddings é OPCIONAL (a migrate do app a pula
+ *  quando a extensão vector não existe) — o seed NUNCA pode depender dela. */
+async function delEmbIfExists(sql, params) {
+  try { await query(sql, params); } catch (_) { /* tabela ausente — segue */ }
+}
+
 async function cleanDemo() {
   const ids = DEMO.map((d) => d.wa_id);
   const c = await query(`SELECT id FROM contacts WHERE wa_id = ANY($1)`, [ids]);
@@ -170,7 +177,7 @@ async function cleanDemo() {
   const contactIds = c.rows.map((r) => r.id);
   const cv = await query(`SELECT id FROM conversations WHERE contact_id = ANY($1)`, [contactIds]);
   const convIds = cv.rows.map((r) => r.id);
-  await query(`DELETE FROM message_embeddings WHERE message_id IN (SELECT id FROM messages WHERE conversation_id = ANY($1))`, [convIds]);
+  await delEmbIfExists(`DELETE FROM message_embeddings WHERE message_id IN (SELECT id FROM messages WHERE conversation_id = ANY($1))`, [convIds]);
   await query(`DELETE FROM messages WHERE conversation_id = ANY($1)`, [convIds]);
   await query(`DELETE FROM appointments WHERE conversation_id = ANY($1)`, [convIds]);
   await query(`DELETE FROM thread_state WHERE conversation_id = ANY($1)`, [convIds]);
@@ -205,7 +212,7 @@ async function seedOne(d) {
   );
   const convId = cv.rows[0].id;
 
-  await query(`DELETE FROM message_embeddings WHERE message_id IN (SELECT id FROM messages WHERE conversation_id = $1)`, [convId]);
+  await delEmbIfExists(`DELETE FROM message_embeddings WHERE message_id IN (SELECT id FROM messages WHERE conversation_id = $1)`, [convId]);
   await query(`DELETE FROM messages WHERE conversation_id = $1`, [convId]);
   for (const [dir, body, mins] of d.msgs) {
     await query(
