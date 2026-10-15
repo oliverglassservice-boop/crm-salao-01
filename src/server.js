@@ -73,6 +73,11 @@
  *       POST cria manual (acha/cria o contato e a conversa), PATCH muda
  *       horário/serviço/status, DELETE remove. Protegidas pelo login do
  *       painel (requirePanelAuth) — o cliente só vê o que a aba mostrar.
+ * v13.13: CAPTURA COM CONTEXTO — a captura de agendamento (v13.2) só rodava
+ *       quando a intenção da MENSAGEM era 'agendamento'; "Sim" e "amanhã às
+ *       8h" não dizem agenda e a confirmação se perdia. Agora também roda
+ *       quando as últimas mensagens carregam sinal de agenda (regex local,
+ *       custo zero) — o parseAppointment continua sendo quem decide.
  */
 import express from 'express';
 import path from 'path';
@@ -767,8 +772,14 @@ async function waWebhook(req, res) {
           isProspect ? '(persona: vendas Mais Automação)' : '(persona: atendente do negócio)');
 
         // v13.2: AGENDA REAL — se a intenção é agendamento, extrai data/hora e grava
+        // v13.13: CAPTURA COM CONTEXTO — a intent chega de UMA mensagem ("Sim",
+        // "amanhã às 8h" não carregam palavra de agenda), então a captura também
+        // dispara quando as últimas mensagens carregam sinal de agenda (regex,
+        // custo zero; o parseAppointment continua sendo quem decide).
         let apptConfirmed = false; // evita mensagem dupla (confirmação 📅 + auto-resposta)
-        if (intent === 'agendamento') {
+        const agendHint = /\b(agend\w*|hor[áa]rio\w*|marcar\w*|marcando|encaix\w*|reserv\w*|disponibilidade|amanh[ãa]|segunda|ter[çc]a|quarta|quinta|sexta|s[áa]bado|domingo)\b|\b\d{1,2}\s*(h|hrs|horas)\b/i.test(
+          recent.map(m => m.body || '').join(' '));
+        if (intent === 'agendamento' || agendHint) {
           const appt = await ai.parseAppointment(recent, contact.name);
           if (appt) {
             const slot = new Date(`${appt.date}T${appt.time}:00-03:00`); // horário de Aracaju
