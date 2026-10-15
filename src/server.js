@@ -66,6 +66,13 @@
  *       boas-vindas, cores e dados do negócio, gravados em app_settings.
  *       MESMA tranca do POST /api/branding: header X-Dev-Pass obrigatório
  *       — o cliente NUNCA importa; a operação é do escritório.
+ * v13.12: AGENDA NO PAINEL — rotas /api/appointments para o painel ver e
+ *       gerir a agenda que JÁ EXISTIA por baixo (v12: tabela appointments;
+ *       v13.2: captura pela IA quando fecha horário na conversa; lembretes
+ *       D-1 e 2h antes). GET lista (com cliente e conversa de origem),
+ *       POST cria manual (acha/cria o contato e a conversa), PATCH muda
+ *       horário/serviço/status, DELETE remove. Protegidas pelo login do
+ *       painel (requirePanelAuth) — o cliente só vê o que a aba mostrar.
  */
 import express from 'express';
 import path from 'path';
@@ -291,6 +298,83 @@ app.post('/api/branding/import', async (req, res) => {
     }
     console.log('[branding] ✅ configuração importada do formulário (' + Object.keys(map).length + ' campos): ' + (map.business_name || ''));
     res.json({ ok: true, imported: Object.keys(map).length, branding: await loadBranding() });
+  } catch (e) { res.status(500).json({ error: String(e.message) }); }
+});
+
+/* ---------------- API: agenda (v13.12) — o painel vê e gere ---------------- */
+app.get('/api/appointments', requirePanelAuth, async (req, res) => {
+  try {
+    const days = Math.min(Math.max(parseInt(req.query.days) || 21, 1), 90);
+    const r = await query(
+      `SELECT a.id, a.service, a.scheduled_for, a.status, a.created_at,
+              cv.id AS conversation_id, cv.contact_id, ct.name AS contact_name, ct.wa_id
+         FROM appointments a
+         JOIN conversations cv ON cv.id = a.conversation_id
+         LEFT JOIN contacts ct ON ct.id = cv.contact_id
+        WHERE a.scheduled_for >= now() - interval '7 days'
+          AND a.scheduled_for <= now() + ($1 || ' days')::interval
+        ORDER BY a.scheduled_for ASC LIMIT 500`,
+      [days]);
+    res.json(r.rows);
+  } catch (e) { res.status(500).json({ error: String(e.message) }); }
+});
+
+app.post('/api/appointments', requirePanelAuth, async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!String(b.name || '').trim() || !String(b.wa_id || '').trim())
+      return res.status(400).json({ error: 'nome e wa_id do cliente são obrigatórios' });
+    const when = new Date(b.scheduled_for || '');
+    if (isNaN(when)) return res.status(400).json({ error: 'scheduled_for inválido (ISO com fuso, ex.: 2026-10-17T14:00:00-03:00)' });
+    // acha o contato pelo WhatsApp (cria se for novo) e a conversa dele
+    let ct = (await query(`SELECT id FROM contacts WHERE wa_id = $1`, [b.wa_id])).rows[0];
+    if (!ct) ct = (await query(
+      `INSERT INTO contacts (wa_id, name) VALUES ($1,$2) RETURNING id`,
+      [b.wa_id, String(b.name).slice(0, 120)])).rows[0];
+    let cv = (await query(
+      `SELECT id FROM conversations WHERE contact_id = $1 ORDER BY id DESC LIMIT 1`,
+      [ct.id])).rows[0];
+    if (!cv) cv = (await query(
+      `INSERT INTO conversations (contact_id, wa_chat_id) VALUES ($1,$2) RETURNING id`,
+      [ct.id, b.wa_id.includes('@') ? b.wa_id : b.wa_id + '@s.whatsapp.net'])).rows[0];
+    const status = ['confirmado', 'pendente', 'concluido', 'cancelado'].includes(b.status) ? b.status : 'confirmado';
+    const ins = await query(
+      `INSERT INTO appointments (conversation_id, service, scheduled_for, status)
+       VALUES ($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING *`,
+      [cv.id, String(b.service || '').slice(0, 200) || null, when.toISOString(), status]);
+    if (!ins.rows[0]) return res.status(409).json({ error: 'já existe agendamento idêntico para esta conversa' });
+    res.json(ins.rows[0]);
+  } catch (e) { res.status(500).json({ error: String(e.message) }); }
+});
+
+app.patch('/api/appointments/:id', requirePanelAuth, async (req, res) => {
+  try {
+    const b = req.body || {};
+    const sets = [], vals = [];
+    if (b.service !== undefined) { sets.push(`service = $${sets.length + 1}`); vals.push(String(b.service).slice(0, 200)); }
+    if (b.scheduled_for !== undefined) {
+      const d = new Date(b.scheduled_for);
+      if (isNaN(d)) return res.status(400).json({ error: 'scheduled_for inválido' });
+      sets.push(`scheduled_for = $${sets.length + 1}`); vals.push(d.toISOString());
+    }
+    if (b.status !== undefined) {
+      if (!['confirmado', 'pendente', 'concluido', 'cancelado'].includes(b.status))
+        return res.status(400).json({ error: 'status inválido (confirmado|pendente|concluido|cancelado)' });
+      sets.push(`status = $${sets.length + 1}`); vals.push(b.status);
+    }
+    if (!sets.length) return res.status(400).json({ error: 'nada para atualizar' });
+    vals.push(req.params.id);
+    const up = await query(`UPDATE appointments SET ${sets.join(', ')} WHERE id = $${vals.length} RETURNING *`, vals);
+    if (!up.rows[0]) return res.status(404).json({ error: 'agendamento não encontrado' });
+    res.json(up.rows[0]);
+  } catch (e) { res.status(500).json({ error: String(e.message) }); }
+});
+
+app.delete('/api/appointments/:id', requirePanelAuth, async (req, res) => {
+  try {
+    const del = await query(`DELETE FROM appointments WHERE id = $1 RETURNING id`, [req.params.id]);
+    if (!del.rows[0]) return res.status(404).json({ error: 'agendamento não encontrado' });
+    res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: String(e.message) }); }
 });
 
