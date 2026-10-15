@@ -5,7 +5,8 @@
 <title>Mais Automação · Atendimento</title>
 <style>
 /* v13.7.1 — LAYOUT "MODELO" (barra lateral) — mockup 3 aprovado.
-   O <script> é o MESMO da v13.7 (única adição: o título no topo acompanha a aba).
+   v13.12 — AGENDA: nova aba 📅 ligada às rotas /api/appointments (grade
+   semanal seg–sáb, lista do dia, stats, PATCH de status, POST manual).
    IDs, classes e seletores que o JS usa — todos preservados. */
 :root{--bg:#F4F2FB;--card:#fff;--line:#EBE7F8;--ink:#17133A;--muted:#8B87A8;--ai:#7C5CFF;--ai-soft:#EFEBFF;--ai-deep:#5B3EE0;--green:#0E9F6E;--green-soft:#E2F2EC;--amber:#B97A12;--amber-soft:#FBF1DC;--wa:#0E9F6E;--red:#DC4B3F;--side:#17133A;--side2:#231C55}
 *{box-sizing:border-box;margin:0;padding:0}
@@ -35,6 +36,7 @@ footer{max-width:1280px;width:100%;margin:0 auto;padding:6px 26px 22px;text-alig
 .view{display:none}.view.active{display:block}
 .kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:18px}
 .kpis5{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:12px}
+.kpis4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px}
 .kpi{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:15px 18px;box-shadow:0 6px 18px rgba(23,19,58,.06)}
 .kpi .l{font-size:11px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
 .kpi .v{font-size:25px;font-weight:800;color:var(--ink);margin-top:4px}
@@ -99,7 +101,8 @@ pre{white-space:pre-wrap;font-family:inherit;font-size:13px;line-height:1.5}
   .side nav{flex-direction:row;flex-wrap:wrap}
   .status{margin-top:0}
   .kanban{grid-template-columns:1fr}.grid2{grid-template-columns:1fr}
-  .kpis,.kpis5{grid-template-columns:repeat(2,1fr)}.msg{max-width:85%}
+  .kpis,.kpis5,.kpis4{grid-template-columns:repeat(2,1fr)}.msg{max-width:85%}
+  .agd-week{grid-template-columns:repeat(2,1fr)}
   .bar input{display:none}
 }
 input[type=color].cfg{width:44px;height:32px;padding:0;border:1px solid var(--line);border-radius:8px;background:none;cursor:pointer}
@@ -107,6 +110,24 @@ input[type=color].cfg{width:44px;height:32px;padding:0;border:1px solid var(--li
 .cfgrow label{width:190px;flex:none;font-size:13px;color:var(--muted)}
 .cfgrow input[type=text],.cfgrow textarea{flex:1;border:1px solid var(--line);border-radius:10px;padding:9px 12px;font-family:inherit;font-size:13px;color:var(--ink);background:#fff}
 .cfgrow textarea{min-height:70px;resize:vertical}
+/* v13.12 — AGENDA (mockup v1 aprovado): grade semanal seg–sáb, blocos
+   verde=confirmado / âmbar=pendente, lista do dia, selo 💬 IA */
+.agd-week{display:grid;grid-template-columns:repeat(6,1fr);gap:10px}
+.agd-day{background:#FAF9FE;border:1px solid var(--line);border-radius:14px;padding:9px;min-height:96px}
+.agd-day.today{border-color:var(--ai);box-shadow:0 0 0 2px rgba(124,92,255,.16)}
+.agd-day.sel{border-color:var(--ai);background:var(--ai-soft)}
+.agd-day h3{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);display:flex;justify-content:space-between;align-items:baseline;padding:0 2px 6px}
+.agd-day h3 b{font-size:13px;color:var(--ink);text-transform:none;letter-spacing:0}
+.agd-blk{display:block;width:100%;text-align:left;border:none;border-radius:10px;padding:7px 9px;margin-top:6px;cursor:pointer;font:inherit;font-size:12px;color:inherit}
+.agd-blk b{display:block;font-size:12.5px;line-height:1.25}
+.agd-blk small{display:block;opacity:.8;margin-top:1px}
+.agd-blk.confirmado{background:var(--green-soft);border-left:3px solid var(--green);color:#0B5C43}
+.agd-blk.pendente{background:var(--amber-soft);border-left:3px solid var(--amber);color:var(--amber)}
+.agd-blk.concluido{background:#DBE9FB;border-left:3px solid #2A5CA8;color:#2A5CA8}
+.agd-blk.cancelado{background:#ECEBF2;border-left:3px solid #C6CBD8;color:#8A8FA6}
+.agd-blk.cancelado b,.agd-blk.cancelado small{text-decoration:line-through}
+.agd-ia{display:inline-block;font-size:9.5px;font-weight:700;background:rgba(255,255,255,.75);border-radius:6px;padding:0 5px;margin-top:3px;color:var(--ai-deep)}
+.agd-none{color:var(--muted);font-size:11px;padding:6px 2px}
 </style>
 <style id="brandCss"></style>
 </head>
@@ -118,12 +139,13 @@ input[type=color].cfg{width:44px;height:32px;padding:0;border:1px solid var(--li
   <nav>
     <button data-v="funil" class="active"><i>🎯</i> Funil</button>
     <button data-v="contatos"><i>👥</i> Contatos</button>
+    <button data-v="agenda"><i>📅</i> Agenda</button>
     <button data-v="wa"><i>💬</i> WhatsApp</button>
     <button data-v="prosp"><i>🧲</i> Prospecção</button>
     <button data-v="metricas"><i>📊</i> Métricas</button>
     <button data-v="config" id="navConfig" style="display:none"><i>⚙️</i> Configurações</button>
   </nav>
-  <div class="status"><span class="ok" id="health">● conectando…</span><span id="brandVersion">v13.10.1 · NEON CRM</span></div>
+  <div class="status"><span class="ok" id="health">● conectando…</span><span id="brandVersion">v13.12 · NEON CRM</span></div>
 </aside>
 <div class="maincol">
 <div class="bar">
@@ -144,6 +166,43 @@ input[type=color].cfg{width:44px;height:32px;padding:0;border:1px solid var(--li
     <div class="card"><h2>Contatos</h2><table>
       <thead><tr><th>Nome</th><th>Empresa</th><th>Score IA</th><th>WhatsApp</th><th>Status</th></tr></thead>
       <tbody id="contactsBody"></tbody></table></div>
+  </section>
+  <section class="view" id="v-agenda">
+    <div class="kpis4">
+      <div class="kpi"><div class="l">Semana exibida</div><div class="v" id="ag-k-semana">–</div></div>
+      <div class="kpi"><div class="l">Hoje</div><div class="v" id="ag-k-hoje">–</div></div>
+      <div class="kpi"><div class="l">Pendentes</div><div class="v" id="ag-k-pend">–</div></div>
+      <div class="kpi"><div class="l">Captados pela IA</div><div class="v" id="ag-k-ia">–</div><div class="s">via WhatsApp</div></div>
+    </div>
+    <div class="card" style="margin-bottom:14px">
+      <h2 style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">📅 Agenda <span class="muted" id="ag-weekLabel" style="font-weight:400;font-size:12px"></span><span style="margin-left:auto;display:flex;gap:6px"><button class="btn" id="agPrev">◀</button><button class="btn" id="agHoje">Esta semana</button><button class="btn" id="agNext">▶</button></span></h2>
+      <div class="inner"><div class="agd-week" id="agWeek"></div></div>
+    </div>
+    <div class="card">
+      <h2 id="ag-dayTitle">Lista do dia</h2>
+      <div class="inner">
+        <details id="agNewBox" style="margin-bottom:10px">
+          <summary class="btn" style="display:inline-block">➕ Novo agendamento manual</summary>
+          <div class="row" style="margin-top:12px">
+            <input type="text" id="ag-name" placeholder="Nome do cliente">
+            <input type="text" id="ag-wa" placeholder="WhatsApp: 55 + DDD + número">
+          </div>
+          <div class="row" style="margin-top:8px">
+            <input type="text" id="ag-service" placeholder="Serviço (ex.: Coloração, Corte, Hidratação…)">
+            <input type="datetime-local" id="ag-when" style="border:1px solid var(--line);border-radius:22px;padding:10px 15px;font-size:13.5px;outline:none;background:#FAF9FE;color:var(--ink);font-family:inherit">
+            <select id="ag-status" style="border:1px solid var(--line);border-radius:22px;padding:10px 12px;font-size:13px;background:#FAF9FE;color:var(--ink);font-family:inherit;outline:none"><option value="pendente">Pendente</option><option value="confirmado">Confirmado</option></select>
+            <button class="btn btn-ai" id="agAdd">Agendar</button>
+          </div>
+          <p class="muted" style="margin-top:8px">Se o cliente for novo, o contato e a conversa nascem aqui. Lembretes D-1 e 2h antes saem sozinhos. 😉</p>
+        </details>
+        <div style="overflow:auto">
+          <table>
+            <thead><tr><th>Hora</th><th>Cliente</th><th>Serviço</th><th>Status</th><th>Origem</th><th>Ações</th></tr></thead>
+            <tbody id="agDayBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
   </section>
   <section class="view" id="v-wa">
     <div class="grid2">
@@ -263,7 +322,7 @@ input[type=color].cfg{width:44px;height:32px;padding:0;border:1px solid var(--li
 const $ = s => document.querySelector(s);
 const fmt = c => 'R$ ' + (c/100).toLocaleString('pt-BR');
 const STAGES = {novo:'Novo lead', qualificacao:'Qualificação', proposta:'Proposta', fechamento:'Fechamento'};
-const TITLES = {funil:'Funil',contatos:'Contatos',wa:'WhatsApp',prosp:'Prospecção',metricas:'Métricas'}; // v13.7.1: título no topo
+const TITLES = {funil:'Funil',contatos:'Contatos',agenda:'Agenda',wa:'WhatsApp',prosp:'Prospecção',metricas:'Métricas'}; // v13.7.1: título no topo · v13.12: Agenda
 let curThread = null;
 let lastCandidates = [];
 
@@ -284,6 +343,7 @@ document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
   else showErr('Seção "'+b.dataset.v+'" não encontrada na página.');
   if (b.dataset.v === 'prosp'){ loadStatus(); loadLeads(); }
   if (b.dataset.v === 'metricas') loadMetrics();
+  if (b.dataset.v === 'agenda') loadAgenda();
   const tt = $('#viewTitle'); if (tt) tt.textContent = TITLES[b.dataset.v] || ''; // v13.7.1
 });
 
@@ -568,15 +628,145 @@ async function loadMetrics(){
   }catch(e){ showErr('Métricas: '+e.message); }
 }
 
+/* ================= AGENDA (aba v13.12 — mockup v1 aprovado) =================
+   Ligada às rotas reais /api/appointments (server v13.12): GET renderiza,
+   PATCH muda status, POST cria agendamento manual (acha/cria contato+conversa).
+   Origem "💬 IA" = conversa com mensagens reais do WhatsApp (captada pela IA);
+   conversa nascida no painel sem mensagens ainda aparece como "manual". */
+const AG_LABELS = {confirmado:'Confirmado',pendente:'Pendente',concluido:'Concluído',cancelado:'Cancelado'};
+const agKey = dt => dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0');
+function agMonday(d){ const m = new Date(d); m.setHours(0,0,0,0); m.setDate(m.getDate()-((m.getDay()+6)%7)); return m; }
+let agWeekStart = agMonday(new Date());
+let agSelDay = agKey(new Date());
+let agCache = [];
+let agIaSet = new Set();
+const agDdMm = dt => String(dt.getDate()).padStart(2,'0')+'/'+String(dt.getMonth()+1).padStart(2,'0');
+
+async function loadAgenda(){
+  try{
+    const [apts, ths] = await Promise.all([
+      j('/api/appointments?days=21',{method:'GET'}),
+      j('/api/threads',{method:'GET'})
+    ]);
+    agCache = Array.isArray(apts) ? apts : [];
+    agIaSet = new Set((ths||[]).filter(t => (t.last_body||'').trim()).map(t => t.id));
+    const todayK = agKey(new Date());
+    const fimK = agKey(new Date(agWeekStart.getFullYear(), agWeekStart.getMonth(), agWeekStart.getDate()+5));
+    let sem=0, hoje=0, pend=0, ia=0;
+    const byDay = {};
+    agCache.forEach(a=>{
+      const k = agKey(new Date(a.scheduled_for));
+      if (k===todayK) hoje++;
+      if (a.status==='pendente') pend++;
+      if (agIaSet.has(a.conversation_id)) ia++;
+      if (k>=agKey(agWeekStart) && k<=fimK) sem++;
+      (byDay[k] = byDay[k]||[]).push(a);
+    });
+    $('#ag-k-semana').textContent = sem;
+    $('#ag-k-hoje').textContent = hoje;
+    $('#ag-k-pend').textContent = pend;
+    $('#ag-k-ia').textContent = agCache.length ? Math.round(ia/agCache.length*100)+'%' : '—';
+    renderAgWeek(byDay);
+    renderAgDay(byDay);
+  }catch(e){ showErr('Agenda: '+e.message); }
+}
+
+function renderAgWeek(byDay){
+  const DOW = ['seg','ter','qua','qui','sex','sáb'];
+  const grid = $('#agWeek'); grid.innerHTML='';
+  const todayK = agKey(new Date());
+  $('#ag-weekLabel').textContent = 'semana de '+agDdMm(agWeekStart)+' a '+agDdMm(new Date(agWeekStart.getFullYear(), agWeekStart.getMonth(), agWeekStart.getDate()+5));
+  for(let i=0;i<6;i++){
+    const d = new Date(agWeekStart.getFullYear(), agWeekStart.getMonth(), agWeekStart.getDate()+i);
+    const k = agKey(d);
+    const cell = document.createElement('div');
+    cell.className = 'agd-day'+(k===todayK?' today':'')+(k===agSelDay?' sel':'');
+    const list = (byDay[k]||[]).slice().sort((a,b)=>new Date(a.scheduled_for)-new Date(b.scheduled_for));
+    let html = '<h3><b>'+DOW[i]+' '+String(d.getDate()).padStart(2,'0')+'</b><span>'+list.length+'</span></h3>';
+    if (!list.length) html += '<div class="agd-none">— livre</div>';
+    cell.innerHTML = html;
+    list.forEach(a=>{
+      const dt = new Date(a.scheduled_for);
+      const b = document.createElement('button');
+      b.className = 'agd-blk '+a.status;
+      b.innerHTML = '<b>'+dt.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})+' · '+esc(a.contact_name||a.wa_id||'cliente')+'</b>'
+        + '<small>'+esc(a.service||'—')+'</small>'
+        + (agIaSet.has(a.conversation_id) ? '<span class="agd-ia">💬 IA</span>' : '');
+      b.onclick = () => { agSelDay = k; renderAgWeek(byDay); renderAgDay(byDay); };
+      cell.appendChild(b);
+    });
+    grid.appendChild(cell);
+  }
+}
+
+function renderAgDay(byDay){
+  const tb = $('#agDayBody'); tb.innerHTML='';
+  const dt = new Date(agSelDay+'T12:00:00');
+  const dia = dt.toLocaleDateString('pt-BR',{weekday:'long', day:'2-digit', month:'long'});
+  $('#ag-dayTitle').textContent = 'Lista do dia — ' + dia.charAt(0).toUpperCase()+dia.slice(1);
+  const list = (byDay[agSelDay]||[]).slice().sort((a,b)=>new Date(a.scheduled_for)-new Date(b.scheduled_for));
+  if (!list.length){ tb.innerHTML = '<tr><td colspan="6" class="empty">Nenhum agendamento neste dia — crie um acima ou aguarde: a IA captura horários pelo WhatsApp. 📅</td></tr>'; return; }
+  list.forEach(a=>{
+    const h = new Date(a.scheduled_for).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+    const tagCls = {confirmado:'enviado', pendente:'fila', concluido:'respondeu', cancelado:'optout'}[a.status]||'optout';
+    const btns = Object.keys(AG_LABELS).filter(s=>s!==a.status)
+      .map(s=>`<button class="btn" style="padding:2px 8px;font-size:11px" onclick="agStatus(${a.id},'${s}')">${AG_LABELS[s]}</button>`).join(' ');
+    tb.innerHTML += `<tr>
+      <td><b>${h}</b></td>
+      <td><b>${esc(a.contact_name||'—')}</b><br><span class="muted">${esc(a.wa_id||'')}</span></td>
+      <td>${esc(a.service||'—')}</td>
+      <td><span class="tag ${tagCls}">${AG_LABELS[a.status]||a.status}</span></td>
+      <td>${agIaSet.has(a.conversation_id)?'<span class="tag">💬 IA</span>':'<span class="tag optout">manual</span>'}</td>
+      <td class="row" style="border:none">${a.conversation_id?`<button class="btn btn-ai" style="padding:2px 8px;font-size:11px" onclick="agOpenConv(${a.conversation_id})">Abrir conversa</button> `:''}${btns}</td>
+    </tr>`;
+  });
+}
+
+async function agStatus(id, s){
+  try{ await j('/api/appointments/'+id,{method:'PATCH',body:{status:s}}); loadAgenda(); }
+  catch(e){ showErr('Status do agendamento: '+e.message); }
+}
+
+async function agOpenConv(cid){
+  document.querySelector('nav button[data-v="wa"]').click();
+  try{
+    const ts = await j('/api/threads',{method:'GET'});
+    const t = (ts||[]).find(x=>x.id===cid);
+    if (t) await openThread(cid, t);
+    else showErr('Conversa sem mensagens ainda — não aparece na lista do WhatsApp.');
+  }catch(e){ showErr('Abrir conversa: '+e.message); }
+}
+
+$('#agPrev').onclick = () => { agWeekStart.setDate(agWeekStart.getDate()-7); loadAgenda(); };
+$('#agNext').onclick = () => { agWeekStart.setDate(agWeekStart.getDate()+7); loadAgenda(); };
+$('#agHoje').onclick = () => { agWeekStart = agMonday(new Date()); agSelDay = agKey(new Date()); loadAgenda(); };
+
+$('#agAdd').onclick = async () => {
+  const name = $('#ag-name').value.trim();
+  const wa = $('#ag-wa').value.replace(/\D/g,'');
+  const when = $('#ag-when').value;
+  if(!name || !wa) return alert('Preencha nome e WhatsApp (55 + DDD + número)');
+  if(!when) return alert('Escolha data e hora');
+  try{
+    const r = await j('/api/appointments',{body:{name, wa_id: wa, service: $('#ag-service').value.trim(), scheduled_for: when+':00', status: $('#ag-status').value}});
+    if (r && r.scheduled_for) agSelDay = agKey(new Date(r.scheduled_for));
+    $('#ag-name').value=''; $('#ag-wa').value=''; $('#ag-service').value=''; $('#ag-when').value='';
+    $('#agNewBox').open = false;
+    await loadAgenda();
+    alert('Agendamento criado ✅ — lembretes D-1 e 2h antes saem sozinhos.');
+  }catch(e){ showErr('Agendar: '+e.message); }
+};
+
 // polling leve: novas sugestões de IA + threads + métricas frescas
 setInterval(async ()=>{ try{ await loadThreads(); if(curThread){ const t=(await j('/api/threads',{method:'GET'})).find(x=>x.id===curThread); if(t&&t.next_suggestion) addSugg(t.next_suggestion,t.suggestion_reason);} }catch(e){/* polling silencioso */} }, 8000);
-setInterval(()=>{ try{ loadStatus(); loadMetrics(); }catch(e){} }, 60000);
+setInterval(()=>{ try{ loadStatus(); loadMetrics(); if ($('#v-agenda').classList.contains('active')) loadAgenda(); }catch(e){} }, 60000);
 
 (async ()=>{ try{
-    await Promise.all([loadFunil(), loadContatos(), loadThreads(), loadStatus(), loadMetrics()]);
+    await Promise.all([loadFunil(), loadContatos(), loadThreads(), loadStatus(), loadMetrics(), loadAgenda()]);
     const h = await j('/api/health',{method:'GET'});
     $('#health').textContent = h.ok ? '● conectado' : '● offline';
     if (location.hash === '#prosp') document.querySelector('nav button[data-v="prosp"]').click();
+    if (location.hash === '#agenda') document.querySelector('nav button[data-v="agenda"]').click();
   }catch(e){ showErr('Carga inicial: '+e.message); $('#health').textContent = '● offline'; }
 })();
 </script>
@@ -593,7 +783,7 @@ setInterval(()=>{ try{ loadStatus(); loadMetrics(); }catch(e){} }, 60000);
   function apply(b){
     if (b.business_name){
       const l=$('#brandLogoText'); if(l) l.textContent=b.business_name.toUpperCase();
-      const v=$('#brandVersion'); if(v) v.textContent='v13.10.1 · '+b.business_name;
+      const v=$('#brandVersion'); if(v) v.textContent='v13.12 · '+b.business_name;
       const f=$('#brandFooter'); if(f) f.textContent=b.business_name+' — painel de atendimento';
       document.title=b.business_name+' · Atendimento';
     }
