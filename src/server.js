@@ -60,6 +60,12 @@
  *       X-Dev-Pass; a rota /api/branding/unlock valida a senha sem salvar.
  *       O painel do cliente continua LENDO a marca (GET) para se pintar —
  *       mas NÃO edita: quem tem PANEL_PASS vê, quem tem DEV_PASS muda.
+ * v13.11: IMPORTAÇÃO DO FORMULÁRIO DO CLIENTE — POST /api/branding/import
+ *       recebe o JSON do formulário de configuração (enviado pelo cliente
+ *       ao escritório) e formata o CRM num único passo: marca, persona,
+ *       boas-vindas, cores e dados do negócio, gravados em app_settings.
+ *       MESMA tranca do POST /api/branding: header X-Dev-Pass obrigatório
+ *       — o cliente NUNCA importa; a operação é do escritório.
  */
 import express from 'express';
 import path from 'path';
@@ -228,6 +234,64 @@ app.post('/api/branding/unlock', async (req, res) => {
   if (!DEV_PASS) return res.status(500).json({ error: 'DEV_PASS não configurada no Environment' });
   if (req.headers['x-dev-pass'] !== DEV_PASS) return res.status(401).json({ error: 'senha incorreta' });
   res.json({ ok: true });
+});
+
+/* ---------------- API: importação do formulário (v13.11) ----------------
+ *  Recebe o JSON gerado pelo Formulário de Configuração do cliente
+ *  (formulario-configuracao-crm.html) e formata o CRM num único POST.
+ *  MESMA tranca do POST /api/branding (X-Dev-Pass): o cliente nunca
+ *  importa nada — a operação é do escritório. */
+const FORM_EXTRA_KEYS = ['owner_name', 'city', 'address', 'hours', 'whatsapp',
+  'nicho', 'nicho_custom', 'missao', 'nunca', 'diferenciais', 'mais',
+  'catalog', 'faq_extra'];
+const HEX_RE = /^#[0-9a-fA-F]{6}$/;
+
+app.post('/api/branding/import', async (req, res) => {
+  try {
+    if (!DEV_PASS) return res.status(500).json({ error: 'DEV_PASS não configurada no Environment — importação travada' });
+    if (req.headers['x-dev-pass'] !== DEV_PASS) return res.status(401).json({ error: 'senha de desenvolvedor incorreta' });
+    const b = req.body || {};
+    const missing = [];
+    if (!String(b.business_name || '').trim()) missing.push('business_name');
+    if (!String(b.attendant_name || '').trim()) missing.push('attendant_name');
+    if (missing.length) return res.status(400).json({ error: 'JSON do formulário incompleto — faltando: ' + missing.join(', ') });
+    const colors = (b.colors && typeof b.colors === 'object') ? b.colors : {};
+    for (const [k, v] of Object.entries(colors)) {
+      if (!HEX_RE.test(String(v))) return res.status(400).json({ error: 'cor inválida em colors.' + k + ' (esperado #RRGGBB)' });
+    }
+    // 1) campos da marca (BRAND_KEYS) — só sobrescreve o que veio preenchido
+    const map = {};
+    for (const k of BRAND_KEYS) {
+      if (b[k] === undefined || b[k] === null) continue;
+      const s = String(b[k]).trim();
+      if (s) map[k] = s.slice(0, 4000);
+    }
+    // 2) campos extras do formulário — guardados em app_settings e já
+    //    viajam dentro do branding (loadBranding lê TODAS as chaves),
+    //    prontos para o ai.js evoluir sem nova migração
+    for (const k of FORM_EXTRA_KEYS) {
+      const v = b[k];
+      if (v === undefined || v === null) continue;
+      let s = Array.isArray(v) ? v.map(String).filter(x => x.trim()).join('\n')
+             : typeof v === 'string' ? v.trim() : String(v);
+      s = s.slice(0, 4000);
+      if (s) map[k] = s;
+    }
+    // 3) cores (vindas do bloco colors do formulário)
+    for (const k of ['brand_ai', 'brand_ai_deep', 'brand_side', 'brand_side2', 'brand_bg']) {
+      if (colors[k]) map[k] = colors[k];
+    }
+    if (!Object.keys(map).length) return res.status(400).json({ error: 'nada a importar — JSON vazio ou sem campos reconhecidos' });
+    for (const [k, v] of Object.entries(map)) {
+      await query(
+        `INSERT INTO app_settings (key, value) VALUES ($1,$2)
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+        [k, v]
+      );
+    }
+    console.log('[branding] ✅ configuração importada do formulário (' + Object.keys(map).length + ' campos): ' + (map.business_name || ''));
+    res.json({ ok: true, imported: Object.keys(map).length, branding: await loadBranding() });
+  } catch (e) { res.status(500).json({ error: String(e.message) }); }
 });
 
 /* ---------------- API: contatos ---------------- */
@@ -756,7 +820,7 @@ setInterval(async () => {
   } catch (e) { console.error('[lembrete] erro no worker:', e.message); }
 }, 5 * 60 * 1000);
 
-console.log(`[boot] NEON CRM v13.10.1 no ar | provider=${PROVIDER} | AUTO_RESPOND=${process.env.AUTO_RESPOND || '(NÃO definido!)'} | login_painel=${PANEL_USER && PANEL_PASS ? 'ATIVO' : 'desativado'} | janela_IA=${AI_WINDOW[0]}h-${AI_WINDOW[1]}h | opt-out: LIGADO (palavras-chave) | escalação: LIGADA | IA paralela + digitando... + tradutor + embaixador: LIGADOS | tranco_dev=${DEV_PASS ? 'ATIVO' : 'FECHADO (DEV_PASS ausente!)'}`);
+console.log(`[boot] NEON CRM v13.10 no ar | provider=${PROVIDER} | AUTO_RESPOND=${process.env.AUTO_RESPOND || '(NÃO definido!)'} | login_painel=${PANEL_USER && PANEL_PASS ? 'ATIVO' : 'desativado'} | janela_IA=${AI_WINDOW[0]}h-${AI_WINDOW[1]}h | opt-out: LIGADO (palavras-chave) | escalação: LIGADA | IA paralela + digitando... + tradutor + embaixador: LIGADOS | tranco_dev=${DEV_PASS ? 'ATIVO' : 'FECHADO (DEV_PASS ausente!)'}`);
 app.listen(PORT, () => console.log(`NEON CRM no ar em ${process.env.APP_URL || 'http://localhost:' + PORT}`));
 
 process.on('SIGTERM', () => { pool.end().then(() => process.exit(0)); });
