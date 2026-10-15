@@ -78,6 +78,11 @@
  *       8h" não dizem agenda e a confirmação se perdia. Agora também roda
  *       quando as últimas mensagens carregam sinal de agenda (regex local,
  *       custo zero) — o parseAppointment continua sendo quem decide.
+ * v13.15: CAPTURA À PROVA DE FALHA — normaliza a saída do parser ("16" →
+ *       "16:00", "18/10" → ISO) + fallback LOCAL sem LLM (regex na última
+ *       mensagem da cliente: "dia 18 as 16hrs", "amanhã às 8h", "sexta 10h")
+ *       + log [agenda] captura avaliada (o EasyPanel mostra exatamente o que
+ *       aconteceu). Só server.js muda; ai.js permanece v13.14-salão.
  */
 import express from 'express';
 import path from 'path';
@@ -87,6 +92,59 @@ import * as ai from './ai.js';
 import * as uazapi from './uazapi.js';
 import * as evolution from './evolution.js';
 import { mountProspect } from './prospect.js';
+
+/* v13.15 — normaliza a saída do parseAppointment (LLM): "16" → "16:00",
+   "18/10" → ISO. Devolve null se não houver data+hora utilizáveis. */
+function normAppt(a) {
+  if (!a || !a.date || !a.time) return null;
+  let d = String(a.date).trim();
+  const mdm = d.match(/^(\d{1,2})\/(\d{1,2})$/); // 18/10
+  if (mdm) d = new Date().getFullYear() + '-' + mdm[2].padStart(2, '0') + '-' + mdm[1].padStart(2, '0');
+  const hh = String(a.time).trim().match(/^(\d{1,2})(?::(\d{1,2}))?/); // 16 | 16:00
+  if (!hh) return null;
+  const h = hh[1].padStart(2, '0') + ':' + (hh[2] || '0').padStart(2, '0');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || !/^\d{2}:\d{2}$/.test(h)) return null;
+  return { date: d, time: h, service: a.service || null };
+}
+
+/* v13.15 — fallback SEM LLM: regex na ÚLTIMA mensagem da cliente.
+   "dia 18 as 16hrs" → 18/10 16:00 · "amanhã às 8h" → amanhã 08:00 ·
+   "sexta 10h" → próxima sexta · "18/10 16h" · "hoje 15h". Sem data E hora
+   claras = null (não inventa). Só roda quando o LLM não devolveu nada. */
+function parseApptLocal(text) {
+  const t = String(text || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  if (!t) return null;
+  const hm = t.match(/(\d{1,2})\s*(?:h|hrs|horas|:)\s*(\d{2})?/) || t.match(/(?:as|pras)\s*(\d{1,2})(?!\d)/);
+  if (!hm) return null;
+  const hh = parseInt(hm[1], 10), mi = hm[2] ? parseInt(hm[2], 10) : 0;
+  if (hh > 23 || mi > 59) return null;
+  const base = new Date();
+  base.setHours(0, 0, 0, 0);
+  if (/depois de amanha/.test(t)) base.setDate(base.getDate() + 2);
+  else if (/\bamanha\b/.test(t)) base.setDate(base.getDate() + 1);
+  else if (/\bhoje\b/.test(t)) { /* fica hoje */ }
+  else {
+    const dD = t.match(/\bdia\s+(\d{1,2})\b/);
+    const dS = t.match(/\b(\d{1,2})\/(\d{1,2})\b/);
+    const WK = { segunda: 1, terca: 2, quarta: 3, quinta: 4, sexta: 5, sabado: 6, domingo: 0 };
+    const wm = Object.keys(WK).find(k => new RegExp('\\b' + k + '\\b').test(t));
+    if (dD) {
+      const d = parseInt(dD[1], 10);
+      if (!(d >= 1 && d <= 31)) return null;
+      base.setMonth(d < base.getDate() ? base.getMonth() + 1 : base.getMonth());
+      base.setDate(d);
+    } else if (dS) {
+      base.setMonth(parseInt(dS[2], 10) - 1);
+      base.setDate(parseInt(dS[1], 10));
+    } else if (wm) {
+      let delta = (WK[wm] - base.getDay() + 7) % 7; if (delta === 0) delta = 7;
+      base.setDate(base.getDate() + delta);
+    } else return null;
+  }
+  const pad = n => String(n).padStart(2, '0');
+  return { date: base.getFullYear() + '-' + pad(base.getMonth() + 1) + '-' + pad(base.getDate()), time: pad(hh) + ':' + pad(mi), service: null };
+}
+
 
 process.on('unhandledRejection', (e) => console.error('[unhandledRejection]', e?.message || e));
 process.on('uncaughtException', (e) => console.error('[uncaughtException]', e?.message || e));
@@ -780,7 +838,12 @@ async function waWebhook(req, res) {
         const agendHint = /\b(agend\w*|hor[áa]rio\w*|marcar\w*|marcando|encaix\w*|reserv\w*|disponibilidade|amanh[ãa]|segunda|ter[çc]a|quarta|quinta|sexta|s[áa]bado|domingo)\b|\b\d{1,2}\s*(h|hrs|horas)\b/i.test(
           recent.map(m => m.body || '').join(' '));
         if (intent === 'agendamento' || agendHint) {
-          const appt = await ai.parseAppointment(recent, contact.name);
+          // v13.15: parser LLM + normalização + fallback LOCAL (regex na última
+          // mensagem da cliente) + log de captura — nada mais falha em silêncio.
+          let appt = await ai.parseAppointment(recent, contact.name);
+          if (appt) appt = normAppt(appt);
+          if (!appt) appt = parseApptLocal(String((recent.filter(m => m.direction === 'in').pop() || {}).body || ''));
+          console.log(`[agenda] captura avaliada (conv ${conversation.id}): intent=${intent} hint=${agendHint} parse=${appt ? appt.date + ' ' + appt.time : 'null'}`);
           if (appt) {
             const slot = new Date(`${appt.date}T${appt.time}:00-03:00`); // horário de Aracaju
             if (!isNaN(slot) && slot > new Date()) {
