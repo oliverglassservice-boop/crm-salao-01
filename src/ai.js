@@ -13,6 +13,10 @@
  * v13.13-SALAO: WHITE-LABEL — lê da MARCA do painel (app_settings via
  *       /api/branding): nome do negócio, nome da atendente, boas-vindas e
  *       persona extra. Sem marca cadastrada, segue TUDO daqui (Bella Donna).
+ * v13.14-SALAO: CAPTURA DE AGENDA — parseAppointment aceita horário proposto
+ *       pela cliente (não só horário aprovado) e a persona NUNCA afirma
+ *       "confirmei/agendei": a confirmação 📅 é do sistema. Só o prompt do
+ *       parser e uma linha da persona mudam — maquinaria intacta.
  */
 import OpenAI from 'openai';
 
@@ -94,6 +98,7 @@ COMO VOCÊ CUIDA DO CLIENTE (a regra mais importante de todas):
 - Você EXPLORA com interesse genuíno: o que ela quer fazer, quando costuma vir, se tem preferência de profissional, se é a primeira vez no studio. Uma pergunta por vez.
 - Você INFORMA: serviços do menu, preços (pela tabela oficial — MAS obedeça a REGRA DOS VALORES, mais abaixo: números só quando a pessoa pedir), como funciona o agendamento.
 - A decisão é 100% da cliente. Quando ela demonstrar interesse, você oferece o horário: "posso te encaixar na agenda — prefere manhã ou tarde?". Oferece UMA vez; se a pessoa não responder ou enrolar, você deixa a porta aberta: "qualquer coisa, estou por aqui 😊" — e para de insistir.
+- AGENDA COMBINADA (regra de ouro): quando a cliente confirma ou propõe um horário com data e hora claras, o SISTEMA registra o agendamento e envia a confirmação 📅 no WhatsApp — VOCÊ NUNCA afirma "confirmei", "agendei" ou "registrei" como fato. Fale do horário como combinado ("anotado pra amanhã às 8h, então!") e deixe a confirmação oficial por conta do 📅 que chega sozinho.
 - PACOTE E NEGOCIAÇÃO (noiva, madrinha, grupo de amigas, "fechando o mês todo", desconto de volume): você NUNCA inventa condição e NUNCA entra em guerra de preço. Coleta os dados (o quê, quantas pessoas, quando) e responde: "deixo registrado e a ${getBusiness(branding).owner} confirma a condição com você, combinado?".
 - CONCORRENTE: você NUNCA critica, NUNCA fala mal e NUNCA confirma afirmações sobre outros salões. Fala do que o studio entrega de verdade e volta ao assunto.
 
@@ -352,11 +357,14 @@ export async function parseAppointment(messages, contactName) {
     .join('\n');
   const out = await chat(
     BASE,
-    `Analise a conversa de WhatsApp de um negócio. A CLIENTE confirmou um agendamento?
+    `Analise a conversa de WhatsApp de um negócio. Ficou COMBINADO um agendamento?
      Responda SOMENTE com JSON válido, sem texto extra:
      {"confirmado": true|false, "data": "YYYY-MM-DD"|null, "hora": "HH:MM"|null, "servico": "nome do serviço ou null"}
-     Regras: "confirmado" só é true quando a CLIENTE aprova expressamente um horário
-     proposto (ex.: "pode ser", "fechado", "10h tá ótimo", "quero marcar").
+     Regras: "confirmado" é true quando a CLIENTE aprova um horário proposto
+     (ex.: "pode ser", "fechado", "10h tá ótimo") OU quando a própria CLIENTE
+     propõe data e hora claras (ex.: "amanhã às 8h", "dia 17 às 10h") e a
+     conversa segue como combinado — proposta da cliente com data+hora JÁ
+     vale, o negócio confirma depois. Serviço: o último citado na conversa.
      Data/hora devem estar no horário de Brasília; resolva "amanhã/hoje/sexta" pela
      conversa; se a hora não ficar clara, use null. Ano atual: ${new Date().getFullYear()}.`,
     `Cliente: ${contactName}
