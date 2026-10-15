@@ -123,7 +123,7 @@ input[type=color].cfg{width:44px;height:32px;padding:0;border:1px solid var(--li
     <button data-v="metricas"><i>📊</i> Métricas</button>
     <button data-v="config" id="navConfig" style="display:none"><i>⚙️</i> Configurações</button>
   </nav>
-  <div class="status"><span class="ok" id="health">● conectando…</span><span id="brandVersion">v13.10.2 · NEON CRM</span></div>
+  <div class="status"><span class="ok" id="health">● conectando…</span><span id="brandVersion">v13.10.1 · NEON CRM</span></div>
 </aside>
 <div class="maincol">
 <div class="bar">
@@ -251,6 +251,7 @@ input[type=color].cfg{width:44px;height:32px;padding:0;border:1px solid var(--li
       <div class="cfgrow"><label>Cor da sidebar (topo)</label><input type="color" class="cfg" id="cfg-side" value="#17133A"><input type="text" id="cfg-side-hex" value="#17133A" style="width:110px;border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-family:monospace"></div>
       <div class="cfgrow"><label>Cor da sidebar (rodapé)</label><input type="color" class="cfg" id="cfg-side2" value="#231C55"><input type="text" id="cfg-side2-hex" value="#231C55" style="width:110px;border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-family:monospace"></div>
       <div class="cfgrow"><label>Fundo da tela</label><input type="color" class="cfg" id="cfg-bg" value="#F4F2FB"><input type="text" id="cfg-bg-hex" value="#F4F2FB" style="width:110px;border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-family:monospace"></div>
+      <div class="cfgrow"><label>Importar do formulário</label><input type="file" id="cfg-import-file" accept=".json,application/json" style="font-size:13px;color:var(--muted);max-width:230px"><button id="cfgImport" style="background:var(--ai);color:#fff;border:none;border-radius:999px;padding:10px 20px;font-weight:700;cursor:pointer">📥 Importar configuração</button><span id="cfgImportStatus" style="font-size:13px;color:var(--muted)"></span></div>
       <div class="cfgrow"><label></label><button id="cfgSave" style="background:var(--ai);color:#fff;border:none;border-radius:999px;padding:10px 24px;font-weight:700;cursor:pointer">💾 Salvar marca</button><span id="cfgStatus" style="font-size:13px;color:var(--muted)"></span></div>
     </div>
   </section>
@@ -580,9 +581,8 @@ setInterval(()=>{ try{ loadStatus(); loadMetrics(); }catch(e){} }, 60000);
 })();
 </script>
 <script>
-/* v13.10.2: WHITE-LABEL + TRANCO DE DEV + FIX DAS CORES — o CSS da marca
-   agora nasce dentro de :root{...} (variável solta fora de seletor é
-   inválida e o navegador descartava — por isso as cores não pegavam). */
+/* v13.10.1: WHITE-LABEL + TRANCO DE DEV — a marca veste o painel e a IA;
+   (logo, cores, versão, rodapé) e a IA (via /api/branding → app_settings). */
 (function(){
   const $ = (s) => document.querySelector(s);
   const F = [['business_name','cfg-business'],['attendant_name','cfg-attendant'],
@@ -593,7 +593,7 @@ setInterval(()=>{ try{ loadStatus(); loadMetrics(); }catch(e){} }, 60000);
   function apply(b){
     if (b.business_name){
       const l=$('#brandLogoText'); if(l) l.textContent=b.business_name.toUpperCase();
-      const v=$('#brandVersion'); if(v) v.textContent='v13.10.2 · '+b.business_name;
+      const v=$('#brandVersion'); if(v) v.textContent='v13.10.1 · '+b.business_name;
       const f=$('#brandFooter'); if(f) f.textContent=b.business_name+' — painel de atendimento';
       document.title=b.business_name+' · Atendimento';
     }
@@ -648,6 +648,31 @@ setInterval(()=>{ try{ loadStatus(); loadMetrics(); }catch(e){} }, 60000);
       else if (j.ok){ apply(j.branding||body); s.textContent='✓ marca salva — painel e IA já estão vestindo a roupa nova'; }
       else s.textContent='erro: '+(j.error||'?');
     } catch(e){ s.textContent='erro: '+e.message; }
+  };
+  // v13.11: IMPORTAÇÃO DO FORMULÁRIO — lê o .json gerado pelo
+  // formulario-configuracao-crm.html e manda para /api/branding/import
+  // (mesma tranca X-Dev-Pass). Só o escritório usa; cliente nunca vê.
+  const fIn=$('#cfg-import-file'), btnImp=$('#cfgImport'), sImp=$('#cfgImportStatus');
+  if (btnImp) btnImp.onclick = async () => {
+    const f = fIn && fIn.files && fIn.files[0];
+    if(!f){ sImp.textContent='escolha o arquivo .json do formulário primeiro'; return; }
+    if(!devPw){ sImp.textContent='\u{1F512} senha de dev necessária — abra o painel pelo link com #config'; return; }
+    sImp.textContent='lendo arquivo…';
+    try {
+      const json = JSON.parse(await f.text());
+      sImp.textContent='importando…';
+      const r = await fetch('/api/branding/import',{method:'POST',headers:{'Content-Type':'application/json','X-Dev-Pass':devPw},body:JSON.stringify(json)});
+      const j = await r.json().catch(()=>({}));
+      if (r.status === 401) sImp.textContent='\u{1F512} senha de desenvolvedor incorreta';
+      else if (r.status === 400) sImp.textContent='arquivo inválido: '+(j.error||'?');
+      else if (r.status === 500) sImp.textContent='erro no servidor: '+(j.error||'?')+' (DEV_PASS configurada no Environment? Save + Restart)';
+      else if (j.ok){
+        apply(j.branding||{});
+        F.forEach(([k,id])=>{ const e=$('#'+id); if(e && j.branding && j.branding[k]!=null) e.value=String(j.branding[k]).slice(0,300); });
+        sImp.textContent='\u2705 configuração importada ('+(j.imported||'?')+' campos) — painel e IA já vestem a roupa nova';
+      }
+      else sImp.textContent='erro: '+(j.error||'?');
+    } catch(e){ sImp.textContent='erro: '+(e && e.message ? e.message : 'arquivo ilegível — é um .json do formulário?'); }
   };
 })();
 </script>
