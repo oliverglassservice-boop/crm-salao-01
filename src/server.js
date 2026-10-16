@@ -99,8 +99,8 @@
  * v13.18: MODO DEV PARA DEMOS — POST /api/dev/wipe (trunca o histórico de
  *       atendimento: mensagens, conversas, contatos, deals, agenda, fila;
  *       preserva usuários e a marca/configuração) + GET /api/dev/debug
- *       (despejo completo de conversas p/ verificação). Os dois trancados
- *       pela DEV_PASS (header X-Dev-Pass) — nada muda no cliente.
+ *       (despejo completo de conversas p/ verificação). ANTES do middleware
+ *       de login do painel — trancadas só pela DEV_PASS (X-Dev-Pass).
  */
 import express from 'express';
 import path from 'path';
@@ -377,24 +377,6 @@ function withinAiHours() {
 /* ---------------- API: saúde (sempre aberta) ---------------- */
 app.get('/api/health', (_req, res) => res.json({ ok: true, ts: Date.now() }));
 
-/* ---------------- APIs protegidas por login ---------------- */
-app.use('/api', (req, res, next) => (req.path === '/health' ? next() : requirePanelAuth(req, res, next)));
-
-/* ---------------- API: diagnóstico de Environment (sem expor segredos) ---------------- */
-app.get('/api/debug/env', (_req, res) => res.json({
-  provider: PROVIDER,
-  auto_respond: process.env.AUTO_RESPOND || null,
-  uazapi_url: process.env.UAZAPI_URL || null,
-  evolution_url: process.env.EVOLUTION_URL || null,
-  evolution_instance: process.env.EVOLUTION_INSTANCE || null,
-  app_url: process.env.APP_URL || null,
-  webhook_secret_definido: !!process.env.WEBHOOK_SECRET,
-  openai_key_definida: !!process.env.OPENAI_API_KEY,
-  whatsapp_key_definida: !!(process.env.UAZAPI_TOKEN || process.env.EVOLUTION_API_KEY),
-  panel_login_ativo: !!(PANEL_USER && PANEL_PASS),
-  ai_window: `${AI_WINDOW[0]}h-${AI_WINDOW[1]}h`,
-}));
-
 /* ---------------- API: MODO DEV p/ demonstrações (v13.18, X-Dev-Pass) ---------------- */
 app.post('/api/dev/wipe', async (req, res) => {
   try {
@@ -421,6 +403,24 @@ app.get('/api/dev/debug', async (req, res) => {
     res.json({ ok: true, contacts: cts.rows, conversations: cvs.rows, messages: msgs.rows, appointments: aps.rows });
   } catch (e) { res.status(500).json({ error: String(e.message) }); }
 });
+
+/* ---------------- APIs protegidas por login ---------------- */
+app.use('/api', (req, res, next) => (req.path === '/health' ? next() : requirePanelAuth(req, res, next)));
+
+/* ---------------- API: diagnóstico de Environment (sem expor segredos) ---------------- */
+app.get('/api/debug/env', (_req, res) => res.json({
+  provider: PROVIDER,
+  auto_respond: process.env.AUTO_RESPOND || null,
+  uazapi_url: process.env.UAZAPI_URL || null,
+  evolution_url: process.env.EVOLUTION_URL || null,
+  evolution_instance: process.env.EVOLUTION_INSTANCE || null,
+  app_url: process.env.APP_URL || null,
+  webhook_secret_definido: !!process.env.WEBHOOK_SECRET,
+  openai_key_definida: !!process.env.OPENAI_API_KEY,
+  whatsapp_key_definida: !!(process.env.UAZAPI_TOKEN || process.env.EVOLUTION_API_KEY),
+  panel_login_ativo: !!(PANEL_USER && PANEL_PASS),
+  ai_window: `${AI_WINDOW[0]}h-${AI_WINDOW[1]}h`,
+}));
 
 /* ---------------- API: métricas do negócio (v13.5) ---------------- */
 app.get('/api/metrics', async (_req, res) => {
