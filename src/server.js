@@ -96,6 +96,11 @@
  *       ("1h da manhã" = 01:00, e a trava avisa); números por extenso
  *       ("três da tarde"); dia cheio -> sugere o PRÓXIMO dia com horários
  *       livres; sumário da IA passa a abrir com o horário de funcionamento.
+ * v13.18: MODO DEV PARA DEMOS — POST /api/dev/wipe (trunca o histórico de
+ *       atendimento: mensagens, conversas, contatos, deals, agenda, fila;
+ *       preserva usuários e a marca/configuração) + GET /api/dev/debug
+ *       (despejo completo de conversas p/ verificação). Os dois trancados
+ *       pela DEV_PASS (header X-Dev-Pass) — nada muda no cliente.
  */
 import express from 'express';
 import path from 'path';
@@ -389,6 +394,33 @@ app.get('/api/debug/env', (_req, res) => res.json({
   panel_login_ativo: !!(PANEL_USER && PANEL_PASS),
   ai_window: `${AI_WINDOW[0]}h-${AI_WINDOW[1]}h`,
 }));
+
+/* ---------------- API: MODO DEV p/ demonstrações (v13.18, X-Dev-Pass) ---------------- */
+app.post('/api/dev/wipe', async (req, res) => {
+  try {
+    if (!DEV_PASS) return res.status(500).json({ error: 'DEV_PASS não configurada no Environment — wipe travado' });
+    if (req.headers['x-dev-pass'] !== DEV_PASS) return res.status(401).json({ error: 'senha de desenvolvedor incorreta' });
+    // apaga TODO o histórico de atendimento (reset p/ demo) — preserva usuários,
+    // marca (app_settings) e configuração; identity reiniciada p/ contagem limpa
+    await query(`TRUNCATE message_embeddings, messages, thread_state, appointments, deals, activities, conversations, contacts, prospect_leads RESTART IDENTITY CASCADE`);
+    console.log('[dev] 🧹 histórico de atendimento apagado (reset de demonstração)');
+    res.json({ ok: true, wiped: ['messages', 'thread_state', 'appointments', 'deals', 'activities', 'conversations', 'contacts', 'prospect_leads'] });
+  } catch (e) { res.status(500).json({ error: String(e.message) }); }
+});
+
+app.get('/api/dev/debug', async (req, res) => {
+  try {
+    if (!DEV_PASS) return res.status(500).json({ error: 'DEV_PASS não configurada' });
+    if (req.headers['x-dev-pass'] !== DEV_PASS) return res.status(401).json({ error: 'senha de desenvolvedor incorreta' });
+    const [cts, cvs, msgs, aps] = await Promise.all([
+      query(`SELECT id, wa_id, name, opt_out, score, status FROM contacts ORDER BY id`),
+      query(`SELECT id, contact_id, wa_chat_id, unread, last_msg_at FROM conversations ORDER BY id`),
+      query(`SELECT id, conversation_id, direction, kind, body, created_at FROM messages ORDER BY id`),
+      query(`SELECT id, conversation_id, service, scheduled_for, status FROM appointments ORDER BY id`),
+    ]);
+    res.json({ ok: true, contacts: cts.rows, conversations: cvs.rows, messages: msgs.rows, appointments: aps.rows });
+  } catch (e) { res.status(500).json({ error: String(e.message) }); }
+});
 
 /* ---------------- API: métricas do negócio (v13.5) ---------------- */
 app.get('/api/metrics', async (_req, res) => {
