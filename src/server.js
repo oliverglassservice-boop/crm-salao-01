@@ -90,6 +90,12 @@
  *       cancelados) -> NÃO grava e responde com AVISO + horários LIVRES
  *       (da agenda real). A IA também recebe os horários livres de
  *       hoje/amanhã (availabilitySummary) e só oferece o que existe.
+ * v13.17: NADA EM SILÊNCIO + CONVENÇÃO DA TARDE — horário que já passou
+ *       TAMBÉM responde (proximo slot livre; antes: silêncio total);
+ *       "1h" a "6h" sem qualificador = TARDE (13h-18h), nunca madrugada
+ *       ("1h da manhã" = 01:00, e a trava avisa); números por extenso
+ *       ("três da tarde"); dia cheio -> sugere o PRÓXIMO dia com horários
+ *       livres; sumário da IA passa a abrir com o horário de funcionamento.
  */
 import express from 'express';
 import path from 'path';
@@ -107,9 +113,13 @@ function normAppt(a) {
   let d = String(a.date).trim();
   const mdm = d.match(/^(\d{1,2})\/(\d{1,2})$/); // 18/10
   if (mdm) d = new Date().getFullYear() + '-' + mdm[2].padStart(2, '0') + '-' + mdm[1].padStart(2, '0');
-  const hh = String(a.time).trim().match(/^(\d{1,2})(?::(\d{1,2}))?/); // 16 | 16:00
-  if (!hh) return null;
-  const h = hh[1].padStart(2, '0') + ':' + (hh[2] || '0').padStart(2, '0');
+  const hm = String(a.time).trim().match(/^(\d{1,2})(?::(\d{1,2}))?/); // 16 | 16:00
+  if (!hm) return null;
+  let H = parseInt(hm[1], 10);
+  // v13.17: convenção do negócio — "1h" a "6h" sem qualificador é TARDE (13h-18h)
+  if (H >= 1 && H <= 6) H += 12;
+  if (H > 23) return null;
+  const h = String(H).padStart(2, '0') + ':' + (hm[2] || '0').padStart(2, '0');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || !/^\d{2}:\d{2}$/.test(h)) return null;
   return { date: d, time: h, service: a.service || null };
 }
@@ -119,11 +129,18 @@ function normAppt(a) {
    "sexta 10h" → próxima sexta · "18/10 16h" · "hoje 15h". Sem data E hora
    claras = null (não inventa). Só roda quando o LLM não devolveu nada. */
 function parseApptLocal(text) {
-  const t = String(text || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  let t = String(text || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   if (!t) return null;
+  // v13.17: números por extenso -> dígitos (sempre com "hora(s)" para não pegar "uma vez")
+  const WORDS = { 'meio-dia': '12h', 'meio dia': '12h', 'uma hora': '1h', 'duas horas': '2h', 'tres horas': '3h', 'quatro horas': '4h', 'cinco horas': '5h', 'seis horas': '6h' };
+  for (const [w, d] of Object.entries(WORDS)) t = t.replace(new RegExp('\\b' + w + '\\b', 'g'), d);
+  const pm = /da tarde|da noite|hora da tarde/.test(t) ? true : (/da manha/.test(t) ? false : undefined);
   const hm = t.match(/(\d{1,2})\s*(?:h|hrs|horas|:)\s*(\d{2})?/) || t.match(/(?:as|pras)\s*(\d{1,2})(?!\d)/);
   if (!hm) return null;
-  const hh = parseInt(hm[1], 10), mi = hm[2] ? parseInt(hm[2], 10) : 0;
+  let hh = parseInt(hm[1], 10), mi = hm[2] ? parseInt(hm[2], 10) : 0;
+  // v13.17: convenção da tarde — "1h" a "6h" sem qualificador = 13h-18h; "1h da manhã" fica 01:00 (a trava avisa)
+  if (hh >= 1 && hh <= 6 && pm !== false) hh += 12;
+  else if (pm === true && hh <= 11) hh += 12;
   if (hh > 23 || mi > 59) return null;
   const base = new Date(new Date().toLocaleDateString('en-CA', { timeZone: AG_TZ }) + 'T12:00:00-03:00'); // v13.16: calendário de Fortaleza
   if (/depois de amanha/.test(t)) base.setDate(base.getDate() + 2);
@@ -145,7 +162,7 @@ function parseApptLocal(text) {
     } else if (wm) {
       let delta = (WK[wm] - base.getDay() + 7) % 7; if (delta === 0) delta = 7;
       base.setDate(base.getDate() + delta);
-    } else return null;
+    } // v13.17: sem dia citado = HOJE — se o horário já passou, a resposta avisa e sugere o próximo (nunca silêncio)
   }
   const pad = n => String(n).padStart(2, '0');
   return { date: base.getFullYear() + '-' + pad(base.getMonth() + 1) + '-' + pad(base.getDate()), time: pad(hh) + ':' + pad(mi), service: null };
@@ -234,10 +251,31 @@ async function slotProblem(slot, hours) {
   }
   if ((await occupiedHours(key)).has(hm.slice(0, 2))) {
     const free = await freeSlotsText(key, hours);
-    return free ? `⏰ Às ${fmtHM(hm)} a agenda já está ocupada. Horários livres em ${fmtDDMM(key)}: ${free}. Qual prefere?`
-                : `⏰ Às ${fmtHM(hm)} a agenda já está ocupada e o dia está cheio. Me diz outro dia que eu vejo a agenda!`;
+    if (free) return `⏰ Às ${fmtHM(hm)} a agenda já está ocupada. Horários livres em ${fmtDDMM(key)}: ${free}. Qual prefere?`;
+    // v13.17: dia cheio -> próximo dia com horários livres
+    for (let i = 1; i <= 7; i++) {
+      const k2 = agDateKey(new Date(agNoon(key).getTime() + i * 86400000));
+      const f2 = await freeSlotsText(k2, hours);
+      if (f2) return `⏰ Às ${fmtHM(hm)} a agenda de ${fmtDDMM(key)} já está cheia. Próximo dia com horários livres: ${AG_WK_PT[agWkNum(agNoon(k2))]}, ${fmtDDMM(k2)}, às ${f2}. Qual prefere?`;
+    }
+    return `⏰ Às ${fmtHM(hm)} a agenda já está ocupada e os próximos dias estão cheios. Me diz outro dia que eu vejo a agenda!`;
   }
   return null;
+}
+
+/** v13.17 — horário que já passou: responde SEMPRE, com o próximo slot livre. */
+async function pastSlotMsg(slot, hours) {
+  const hoje = agDateKey(new Date());
+  if (agDateKey(slot) === hoje) {
+    const free = await freeSlotsText(hoje, hours);
+    if (free) return `📅 Esse horário já passou 🙂 Ainda hoje tenho: ${free}. Qual prefere?`;
+  }
+  for (let i = 1; i <= 7; i++) {
+    const k2 = agDateKey(new Date(agNoon(hoje).getTime() + i * 86400000));
+    const f2 = await freeSlotsText(k2, hours);
+    if (f2) return `📅 Esse horário já passou 🙂 Próximo dia com horários livres: ${AG_WK_PT[agWkNum(agNoon(k2))]}, ${fmtDDMM(k2)}, às ${f2}. Qual prefere?`;
+  }
+  return '📅 Esse horário já passou 🙂 Me diz outro dia e horário que eu vejo a agenda!';
 }
 
 /** Resumo curto dos horários livres (hoje + amanhã) p/ a IA oferecer. */
@@ -252,7 +290,7 @@ async function availabilitySummary(hours) {
       const free = await freeSlotsText(k, hours);
       parts.push(`${label}: ${free ? free + ' livres' : 'agenda cheia'}`);
     }
-    return parts.join(' · ');
+    return `Atendemos ${hours.text} · ` + parts.join(' · '); // v13.17: funcionamento aberto no sumário
   } catch { return ''; }
 }
 
@@ -960,8 +998,9 @@ async function waWebhook(req, res) {
           console.log(`[agenda] captura avaliada (conv ${conversation.id}): intent=${intent} hint=${agendHint} parse=${appt ? appt.date + ' ' + appt.time : 'null'}`);
           if (appt) {
             const slot = new Date(`${appt.date}T${appt.time}:00-03:00`); // horário de Aracaju
-            if (!isNaN(slot) && slot > new Date()) {
-              const problem = await slotProblem(slot, agHours); // v13.16: trava de funcionamento
+            if (!isNaN(slot)) {
+              // v13.17: nada em silêncio — horário passado TAMBÉM responde, com o próximo slot livre
+              const problem = slot.getTime() <= Date.now() ? await pastSlotMsg(slot, agHours) : await slotProblem(slot, agHours);
               const ins = problem ? { rowCount: 0 } : await query(
                 `INSERT INTO appointments (conversation_id, service, scheduled_for)
                  VALUES ($1,$2,$3) ON CONFLICT DO NOTHING RETURNING id`,
