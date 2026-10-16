@@ -99,10 +99,12 @@
  * v13.18: MODO DEV PARA DEMOS — POST /api/dev/wipe (trunca o histórico de
  *       atendimento) + GET /api/dev/debug (despejo completo). ANTES do
  *       middleware de login do painel — trancadas só pela DEV_PASS.
- * v13.19: CAPTURA À PROVA DE ALUCINAÇÃO — quando a última mensagem da
- *       cliente traz DIA + HORA explícitos, o parser LOCAL vence (LLM só
- *       entra para contexto vago); e o slot que a PRÓPRIA conversa já
- *       capturou responde "já está na agenda" (não "ocupada").
+ * v13.19: CAPTURA À PROVA DE ALUCINAÇÃO — DIA+HORA explícitos na última
+ *       mensagem: o parser LOCAL vence; slot repetido = "já está na agenda".
+ * v13.20: GATE DA CAPTURA — só avalia quando a PRÓPRIA mensagem pede
+ *       agenda (intent 'agendamento') ou traz sinal nela (dia, hora ou
+ *       aprovação). "perfeito, obrigada!" NÃO re-abre a captura (o LLM
+ *       alucinava horário a partir do contexto). E o LOCAL vence SEMPRE.
  */import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -1031,15 +1033,18 @@ async function waWebhook(req, res) {
         let apptConfirmed = false; // evita mensagem dupla (confirmação 📅 + auto-resposta)
         const agendHint = /\b(agend\w*|hor[áa]rio\w*|marcar\w*|marcando|encaix\w*|reserv\w*|disponibilidade|amanh[ãa]|segunda|ter[çc]a|quarta|quinta|sexta|s[áa]bado|domingo)\b|\b\d{1,2}\s*(h|hrs|horas)\b/i.test(
           recent.map(m => m.body || '').join(' '));
-        if (intent === 'agendamento' || agendHint) {
+        if (intent === 'agendamento' || lastSig) { // v13.20: gate na ÚLTIMA mensagem (contexto não re-abre)
           // v13.15: parser LLM + normalização + fallback LOCAL (regex na última
           // mensagem da cliente) + log de captura — nada mais falha em silêncio.
-          // v13.19: DIA+HORA explícitos na última mensagem → o LOCAL vence
-          // (determinístico, à prova de alucinação do LLM); vago → LLM primeiro.
+          // v13.20: GATE — a captura só abre quando a PRÓPRIA mensagem pede
+          // agenda (intent) ou traz sinal nela (dia, hora ou aprovação);
+          // agradecimento/fecho NÃO re-abre (o LLM alucinava pelo contexto).
           const lastInBody = String((recent.filter(m => m.direction === 'in').pop() || {}).body || '');
-          const apptLLM = normAppt(await ai.parseAppointment(recent, contact.name));
+          const lastSig = /(agend\w*|marcar\w*|marcando|encaix\w*|reserv\w*|hor[áa]rio|disponibilidade|\bdia\s+\d{1,2}\b|\d{1,2}\/\d{1,2}\b|\b(segunda|ter[çc]a|quarta|quinta|sexta|s[áa]bado|domingo|amanh[ãa]|hoje)\b|\b\d{1,2}\s*(h|hrs|horas)\b|\b\d{1,2}:\d{2}\b|^(sim|ss|s|pode|pode ser|fechado|fechou|quero|bora|vamos)\b)/i.test(lastInBody.trim());
           const localAppt = parseApptLocal(lastInBody);
-          const appt = hasExplicitDayWhen(lastInBody) ? (localAppt || apptLLM) : (apptLLM || localAppt);
+          const apptLLM = normAppt(await ai.parseAppointment(recent, contact.name));
+          // v13.20: LOCAL vence SEMPRE (determinístico, à prova de alucinação)
+          const appt = localAppt || apptLLM;
           console.log(`[agenda] captura avaliada (conv ${conversation.id}): intent=${intent} hint=${agendHint} parse=${appt ? appt.date + ' ' + appt.time : 'null'}`);
           if (appt) {
             const slot = new Date(`${appt.date}T${appt.time}:00-03:00`); // horário de Aracaju
