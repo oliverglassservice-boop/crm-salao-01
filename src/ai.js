@@ -17,6 +17,9 @@
  *       pela cliente (não só horário aprovado) e a persona NUNCA afirma
  *       "confirmei/agendei": a confirmação 📅 é do sistema. Só o prompt do
  *       parser e uma linha da persona mudam — maquinaria intacta.
+ * v13.15-SALAO: AGENDA REAL NA PERSONA — o server injeta os horários LIVRES
+ *       de hoje/amanhã (da tabela appointments); a IA oferece só o que
+ *       existe e nunca promete dia fechado/horário ocupado.
  */
 import OpenAI from 'openai';
 
@@ -296,9 +299,16 @@ export async function suggestReply(messages, contactContext = {}) {
     : `
 
      SEM VALORES NESTA RESPOSTA: a pessoa não pediu preço/valor/orçamento — NÃO cite número algum; se sentir curiosidade de valor, ofereça: "quer que eu te mande a tabela de valores?".`;
+  // v13.15-SALÃO: agenda REAL (horários livres de hoje/amanhã, do server)
+  const agendaBlock = contactContext.agenda
+    ? `
+
+     AGENDA REAL (horários LIVRES de hoje e amanhã, vindos do sistema): ${contactContext.agenda}
+     Quando oferecer horário, ofereça SÓ horários livres desta lista (ou pergunte a data desejada). Dia marcado "fechado" e horário fora da lista NÃO podem ser prometidos — nesse caso diga que vai conferir a agenda e registre o pedido.`
+    : '';
   const out = await chat(
     BASE,
-    `${personaPrompt(contactContext.branding)}${extra}${welcome}${priceBlock}
+    `${personaPrompt(contactContext.branding)}${extra}${welcome}${priceBlock}${agendaBlock}
 
      Escreva UMA mensagem de WhatsApp como ${getBusiness(contactContext.branding).attendant} respondendo à última mensagem da pessoa.
      REGRA DE OURO: mensagem CURTA (1 a 3 frases), respondendo tudo o que foi perguntado em UMA única mensagem, na ordem, com transições naturais (nunca em várias mensagens) — EXCETO quando incluir a TABELA DE VALORES: aí a resposta é a tabela limpa + no máximo 1 frase sua.
