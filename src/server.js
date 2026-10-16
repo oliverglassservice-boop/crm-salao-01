@@ -97,12 +97,13 @@
  *       ("três da tarde"); dia cheio -> sugere o PRÓXIMO dia com horários
  *       livres; sumário da IA passa a abrir com o horário de funcionamento.
  * v13.18: MODO DEV PARA DEMOS — POST /api/dev/wipe (trunca o histórico de
- *       atendimento: mensagens, conversas, contatos, deals, agenda, fila;
- *       preserva usuários e a marca/configuração) + GET /api/dev/debug
- *       (despejo completo de conversas p/ verificação). ANTES do middleware
- *       de login do painel — trancadas só pela DEV_PASS (X-Dev-Pass).
- */
-import express from 'express';
+ *       atendimento) + GET /api/dev/debug (despejo completo). ANTES do
+ *       middleware de login do painel — trancadas só pela DEV_PASS.
+ * v13.19: CAPTURA À PROVA DE ALUCINAÇÃO — quando a última mensagem da
+ *       cliente traz DIA + HORA explícitos, o parser LOCAL vence (LLM só
+ *       entra para contexto vago); e o slot que a PRÓPRIA conversa já
+ *       capturou responde "já está na agenda" (não "ocupada").
+ */import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { query, ensureContactAndConversation, migrate, pool } from './db.js';
@@ -171,6 +172,15 @@ function parseApptLocal(text) {
   }
   const pad = n => String(n).padStart(2, '0');
   return { date: base.getFullYear() + '-' + pad(base.getMonth() + 1) + '-' + pad(base.getDate()), time: pad(hh) + ':' + pad(mi), service: null };
+}
+
+/* v13.19 — a última mensagem traz DIA + HORA explícitos? Se sim, o parser
+   local (determinístico) decide sozinho, sem LLM. */
+function hasExplicitDayWhen(text) {
+  const t = String(text || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const hasDay = /\bdia\s+\d{1,2}\b|\b\d{1,2}\/\d{1,2}\b|\b(segunda|terca|quarta|quinta|sexta|sabado|domingo|amanha|hoje|depois de amanha)\b/.test(t);
+  const hasHour = /(\d{1,2})\s*(?:h|hrs|horas|:)\s*\d{0,2}/.test(t) || /\b(?:as|pras)\s+\d{1,2}\b/.test(t);
+  return hasDay && hasHour;
 }
 
 /* v13.16 — HORÁRIO DE FUNCIONAMENTO + AGENDA REAL (trava e sugestões). */
@@ -377,6 +387,24 @@ function withinAiHours() {
 /* ---------------- API: saúde (sempre aberta) ---------------- */
 app.get('/api/health', (_req, res) => res.json({ ok: true, ts: Date.now() }));
 
+/* ---------------- APIs protegidas por login ---------------- */
+app.use('/api', (req, res, next) => (req.path === '/health' ? next() : requirePanelAuth(req, res, next)));
+
+/* ---------------- API: diagnóstico de Environment (sem expor segredos) ---------------- */
+app.get('/api/debug/env', (_req, res) => res.json({
+  provider: PROVIDER,
+  auto_respond: process.env.AUTO_RESPOND || null,
+  uazapi_url: process.env.UAZAPI_URL || null,
+  evolution_url: process.env.EVOLUTION_URL || null,
+  evolution_instance: process.env.EVOLUTION_INSTANCE || null,
+  app_url: process.env.APP_URL || null,
+  webhook_secret_definido: !!process.env.WEBHOOK_SECRET,
+  openai_key_definida: !!process.env.OPENAI_API_KEY,
+  whatsapp_key_definida: !!(process.env.UAZAPI_TOKEN || process.env.EVOLUTION_API_KEY),
+  panel_login_ativo: !!(PANEL_USER && PANEL_PASS),
+  ai_window: `${AI_WINDOW[0]}h-${AI_WINDOW[1]}h`,
+}));
+
 /* ---------------- API: MODO DEV p/ demonstrações (v13.18, X-Dev-Pass) ---------------- */
 app.post('/api/dev/wipe', async (req, res) => {
   try {
@@ -403,24 +431,6 @@ app.get('/api/dev/debug', async (req, res) => {
     res.json({ ok: true, contacts: cts.rows, conversations: cvs.rows, messages: msgs.rows, appointments: aps.rows });
   } catch (e) { res.status(500).json({ error: String(e.message) }); }
 });
-
-/* ---------------- APIs protegidas por login ---------------- */
-app.use('/api', (req, res, next) => (req.path === '/health' ? next() : requirePanelAuth(req, res, next)));
-
-/* ---------------- API: diagnóstico de Environment (sem expor segredos) ---------------- */
-app.get('/api/debug/env', (_req, res) => res.json({
-  provider: PROVIDER,
-  auto_respond: process.env.AUTO_RESPOND || null,
-  uazapi_url: process.env.UAZAPI_URL || null,
-  evolution_url: process.env.EVOLUTION_URL || null,
-  evolution_instance: process.env.EVOLUTION_INSTANCE || null,
-  app_url: process.env.APP_URL || null,
-  webhook_secret_definido: !!process.env.WEBHOOK_SECRET,
-  openai_key_definida: !!process.env.OPENAI_API_KEY,
-  whatsapp_key_definida: !!(process.env.UAZAPI_TOKEN || process.env.EVOLUTION_API_KEY),
-  panel_login_ativo: !!(PANEL_USER && PANEL_PASS),
-  ai_window: `${AI_WINDOW[0]}h-${AI_WINDOW[1]}h`,
-}));
 
 /* ---------------- API: métricas do negócio (v13.5) ---------------- */
 app.get('/api/metrics', async (_req, res) => {
@@ -1024,14 +1034,26 @@ async function waWebhook(req, res) {
         if (intent === 'agendamento' || agendHint) {
           // v13.15: parser LLM + normalização + fallback LOCAL (regex na última
           // mensagem da cliente) + log de captura — nada mais falha em silêncio.
-          let appt = await ai.parseAppointment(recent, contact.name);
-          if (appt) appt = normAppt(appt);
-          if (!appt) appt = parseApptLocal(String((recent.filter(m => m.direction === 'in').pop() || {}).body || ''));
+          // v13.19: DIA+HORA explícitos na última mensagem → o LOCAL vence
+          // (determinístico, à prova de alucinação do LLM); vago → LLM primeiro.
+          const lastInBody = String((recent.filter(m => m.direction === 'in').pop() || {}).body || '');
+          const apptLLM = normAppt(await ai.parseAppointment(recent, contact.name));
+          const localAppt = parseApptLocal(lastInBody);
+          const appt = hasExplicitDayWhen(lastInBody) ? (localAppt || apptLLM) : (apptLLM || localAppt);
           console.log(`[agenda] captura avaliada (conv ${conversation.id}): intent=${intent} hint=${agendHint} parse=${appt ? appt.date + ' ' + appt.time : 'null'}`);
           if (appt) {
             const slot = new Date(`${appt.date}T${appt.time}:00-03:00`); // horário de Aracaju
             if (!isNaN(slot)) {
               // v13.17: nada em silêncio — horário passado TAMBÉM responde, com o próximo slot livre
+              // v13.19: slot já capturado por ESTA conversa = "já anotei", não "ocupada"
+              const own = await query(`SELECT 1 FROM appointments WHERE conversation_id = $1 AND scheduled_for = $2 LIMIT 1`, [conversation.id, slot.toISOString()]);
+              if (own.rowCount > 0) {
+                const conf = '📅 Esse horário já está na agenda! Qualquer ajuste é só me chamar 😊';
+                await query(`INSERT INTO messages (conversation_id, direction, kind, body) VALUES ($1,'out','text',$2)`, [conversation.id, conf]);
+                try { await wa.sendText(conversation.wa_chat_id, conf); apptConfirmed = true; } catch (_) { /* segue */ }
+                console.log('[agenda] slot repetido da própria conversa — "já anotei" enviado');
+                return;
+              }
               const problem = slot.getTime() <= Date.now() ? await pastSlotMsg(slot, agHours) : await slotProblem(slot, agHours);
               const ins = problem ? { rowCount: 0 } : await query(
                 `INSERT INTO appointments (conversation_id, service, scheduled_for)
