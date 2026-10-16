@@ -83,6 +83,13 @@
  *       mensagem da cliente: "dia 18 as 16hrs", "amanhã às 8h", "sexta 10h")
  *       + log [agenda] captura avaliada (o EasyPanel mostra exatamente o que
  *       aconteceu). Só server.js muda; ai.js permanece v13.14-salão.
+ * v13.16: TRAVA DE FUNCIONAMENTO + AGENDA REAL — o horário vem do campo
+ *       "hours" do formulário/import (branding; padrão: terça a sábado,
+ *       9h-19h). Antes de gravar, valida o slot: dia fechado, fora do
+ *       horário ou horário já ocupado (appointments do dia, menos
+ *       cancelados) -> NÃO grava e responde com AVISO + horários LIVRES
+ *       (da agenda real). A IA também recebe os horários livres de
+ *       hoje/amanhã (availabilitySummary) e só oferece o que existe.
  */
 import express from 'express';
 import path from 'path';
@@ -118,8 +125,7 @@ function parseApptLocal(text) {
   if (!hm) return null;
   const hh = parseInt(hm[1], 10), mi = hm[2] ? parseInt(hm[2], 10) : 0;
   if (hh > 23 || mi > 59) return null;
-  const base = new Date();
-  base.setHours(0, 0, 0, 0);
+  const base = new Date(new Date().toLocaleDateString('en-CA', { timeZone: AG_TZ }) + 'T12:00:00-03:00'); // v13.16: calendário de Fortaleza
   if (/depois de amanha/.test(t)) base.setDate(base.getDate() + 2);
   else if (/\bamanha\b/.test(t)) base.setDate(base.getDate() + 1);
   else if (/\bhoje\b/.test(t)) { /* fica hoje */ }
@@ -143,6 +149,111 @@ function parseApptLocal(text) {
   }
   const pad = n => String(n).padStart(2, '0');
   return { date: base.getFullYear() + '-' + pad(base.getMonth() + 1) + '-' + pad(base.getDate()), time: pad(hh) + ':' + pad(mi), service: null };
+}
+
+/* v13.16 — HORÁRIO DE FUNCIONAMENTO + AGENDA REAL (trava e sugestões). */
+const AG_TZ = 'America/Fortaleza';
+const AG_WK_EN = { sunday: 0, monday: 1, tuesday: 2, wednesday: 3, thursday: 4, friday: 5, saturday: 6 };
+const AG_WK_PT = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
+
+/** Lê o campo "hours" do formulário (ex.: "terça a sábado, das 9h às 19h").
+    Padrão sem campo: terça a sábado, 9h às 19h (Bella Donna). */
+function parseHours(s) {
+  const out = { days: [2, 3, 4, 5, 6], open: '09:00', close: '19:00', text: String(s || '').trim() || 'terça a sábado, das 9h às 19h' };
+  const t = String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  if (!t) return out;
+  const DAY = { domingo: 0, segunda: 1, terca: 2, quarta: 3, quinta: 4, sexta: 5, sabado: 6 };
+  if (/24\s*h|24 horas/.test(t)) { out.days = [0, 1, 2, 3, 4, 5, 6]; out.open = '00:00'; out.close = '23:59'; return out; }
+  if (/todos os dias|todos dias|segunda a domingo/.test(t)) out.days = [0, 1, 2, 3, 4, 5, 6];
+  else {
+    const m = t.match(/\b(segunda|terca|quarta|quinta|sexta|sabado|domingo)\s*(?:a|ate|-)\s*(segunda|terca|quarta|quinta|sexta|sabado|domingo)\b/);
+    if (m) { const a = DAY[m[1]], b = DAY[m[2]]; out.days = []; for (let d = a; ; d = (d + 1) % 7) { out.days.push(d); if (d === b) break; } }
+    else {
+      const found = [...t.matchAll(/\b(segunda|terca|quarta|quinta|sexta|sabado|domingo)s?\b/g)].map(x => DAY[x[1]]);
+      if (found.length) out.days = [...new Set(found)].sort((a, b) => a - b);
+    }
+  }
+  const tm = t.match(/(\d{1,2})(?:[:h](\d{2}))?\s*h?\s*(?:as|ate|a|-)\s*(\d{1,2})(?:[:h](\d{2}))?\s*h?/);
+  if (tm) { out.open = String(tm[1]).padStart(2, '0') + ':' + (tm[2] || '00'); out.close = String(tm[3]).padStart(2, '0') + ':' + (tm[4] || '00'); }
+  return out;
+}
+const agWkNum = d => AG_WK_EN[d.toLocaleDateString('en-GB', { timeZone: AG_TZ, weekday: 'long' }).toLowerCase()];
+const agDateKey = d => d.toLocaleDateString('en-CA', { timeZone: AG_TZ }); // YYYY-MM-DD
+const agHourStr = d => d.toLocaleTimeString('en-GB', { timeZone: AG_TZ, hour: '2-digit', minute: '2-digit', hour12: false }); // HH:MM
+const agNoon = key => new Date(key + 'T12:00:00-03:00'); // âncora estável (sem DST em Fortaleza)
+const fmtHM = hm => { const p = String(hm).split(':'); return String(parseInt(p[0], 10)) + 'h' + (p[1] !== '00' ? p[1] : ''); };
+const fmtDDMM = key => key.slice(8, 10) + '/' + key.slice(5, 7);
+
+/** Horas ocupadas do dia (HH), ignorando cancelados. */
+async function occupiedHours(key) {
+  try {
+    const r = await query(
+      `SELECT scheduled_for FROM appointments
+        WHERE scheduled_for >= $1 AND scheduled_for <= $2 AND status <> 'cancelado'`,
+      [new Date(key + 'T00:00:00-03:00').toISOString(), new Date(key + 'T23:59:59-03:00').toISOString()]);
+    return new Set(r.rows.map(x => agHourStr(new Date(x.scheduled_for)).slice(0, 2)));
+  } catch { return new Set(); }
+}
+
+/** Até 4 horários livres do dia (dentro do funcionamento, futuro, livres). */
+async function freeSlotsText(key, hours) {
+  if (!hours.days.includes(agWkNum(agNoon(key)))) return '';
+  const occ = await occupiedHours(key);
+  const oh = parseInt(hours.open, 10), ch = parseInt(hours.close, 10), om = parseInt(hours.close.slice(3, 5), 10) || 0;
+  const now = Date.now();
+  const free = [];
+  for (let h = oh; h < ch || (h === ch && om > 0); h++) {
+    const hh = String(h).padStart(2, '0');
+    if (occ.has(hh)) continue;
+    if (new Date(key + 'T' + hh + ':00:00-03:00').getTime() <= now) continue;
+    free.push(fmtHM(hh + ':00'));
+    if (free.length >= 4) break;
+  }
+  return free.length ? free.join(', ').replace(/, ([^,]*)$/, ' ou $1') : '';
+}
+
+/** v13.16 — A TRAVA: devolve a MENSAGEM de aviso (com sugestões) se o slot
+    violar o funcionamento ou cair em hora ocupada; null se pode gravar. */
+async function slotProblem(slot, hours) {
+  const key = agDateKey(slot);
+  if (!hours.days.includes(agWkNum(slot))) {
+    for (let i = 1; i <= 7; i++) {
+      const k2 = agDateKey(new Date(agNoon(key).getTime() + i * 86400000));
+      const free = await freeSlotsText(k2, hours);
+      if (free) return `📅 ${fmtDDMM(key)} (${AG_WK_PT[agWkNum(slot)]}) estamos fechados — atendemos ${hours.text}. Posso te encaixar ${AG_WK_PT[agWkNum(agNoon(k2))]}, ${fmtDDMM(k2)}, às ${free}. Qual prefere?`;
+    }
+    return `📅 ${fmtDDMM(key)} (${AG_WK_PT[agWkNum(slot)]}) estamos fechados — atendemos ${hours.text}. Me diz outro dia que eu vejo a agenda!`;
+  }
+  const hm = agHourStr(slot), mins = parseInt(hm.slice(0, 2), 10) * 60 + parseInt(hm.slice(3, 5), 10);
+  const [oh, om] = [parseInt(hours.open, 10), parseInt(hours.open.slice(3, 5), 10) || 0];
+  const [ch, cm] = [parseInt(hours.close, 10), parseInt(hours.close.slice(3, 5), 10) || 0];
+  if (mins < oh * 60 + om || mins >= ch * 60 + cm) {
+    const free = await freeSlotsText(key, hours);
+    return free ? `⏰ Às ${fmtHM(hm)} já saímos do horário de atendimento (${hours.open} às ${hours.close}). Horários livres em ${fmtDDMM(key)}: ${free}. Qual prefere?`
+                : `⏰ Às ${fmtHM(hm)} já saímos do horário de atendimento (${hours.text}). Me diz outro horário que eu vejo a agenda!`;
+  }
+  if ((await occupiedHours(key)).has(hm.slice(0, 2))) {
+    const free = await freeSlotsText(key, hours);
+    return free ? `⏰ Às ${fmtHM(hm)} a agenda já está ocupada. Horários livres em ${fmtDDMM(key)}: ${free}. Qual prefere?`
+                : `⏰ Às ${fmtHM(hm)} a agenda já está ocupada e o dia está cheio. Me diz outro dia que eu vejo a agenda!`;
+  }
+  return null;
+}
+
+/** Resumo curto dos horários livres (hoje + amanhã) p/ a IA oferecer. */
+async function availabilitySummary(hours) {
+  try {
+    const hoje = agDateKey(new Date());
+    const parts = [];
+    for (let i = 0; i < 2; i++) {
+      const k = agDateKey(new Date(agNoon(hoje).getTime() + i * 86400000));
+      const label = (i === 0 ? 'hoje' : 'amanhã') + ` (${AG_WK_PT[agWkNum(agNoon(k))]})`;
+      if (!hours.days.includes(agWkNum(agNoon(k)))) { parts.push(`${label}: fechado`); continue; }
+      const free = await freeSlotsText(k, hours);
+      parts.push(`${label}: ${free ? free + ' livres' : 'agenda cheia'}`);
+    }
+    return parts.join(' · ');
+  } catch { return ''; }
 }
 
 
@@ -809,11 +920,14 @@ async function waWebhook(req, res) {
         // v13.9.4: LLMs em PARALELO (Promise.all) — intenção e resposta num
         // round-trip só (antes: fila, 2 esperas seguidas = o dobro do tempo).
         const t0 = Date.now();
+        const branding = await loadBranding();
+        const agHours = parseHours(branding && branding.hours); // v13.16: funcionamento (formulário → branding)
         const [intentRaw, suggestion] = await Promise.all([
           ai.classifyIntent(body),
           ai.suggestReply(recent, {
             name: contact.name, company: contact.company, is_prospect: isProspect,
-            branding: await loadBranding(),
+            branding,
+            agenda: await availabilitySummary(agHours), // v13.16: horários livres reais
           }),
         ]);
         let intent = intentRaw;
@@ -847,11 +961,23 @@ async function waWebhook(req, res) {
           if (appt) {
             const slot = new Date(`${appt.date}T${appt.time}:00-03:00`); // horário de Aracaju
             if (!isNaN(slot) && slot > new Date()) {
-              const ins = await query(
+              const problem = await slotProblem(slot, agHours); // v13.16: trava de funcionamento
+              const ins = problem ? { rowCount: 0 } : await query(
                 `INSERT INTO appointments (conversation_id, service, scheduled_for)
                  VALUES ($1,$2,$3) ON CONFLICT DO NOTHING RETURNING id`,
                 [conversation.id, appt.service, slot.toISOString()]);
-              if (ins.rowCount > 0) {
+              if (problem) {
+                await query(`INSERT INTO messages (conversation_id, direction, kind, body)
+                             VALUES ($1,'out','text',$2)`, [conversation.id, problem]);
+                await query(`UPDATE conversations SET last_msg_at = now() WHERE id = $1`, [conversation.id]);
+                try {
+                  await wa.sendText(conversation.wa_chat_id, problem);
+                  apptConfirmed = true; // v13.16: o aviso já respondeu — auto-resposta dispensada
+                  console.log('[agenda] ⚠ fora do funcionamento — aviso enviado, nada gravado:', appt.date, appt.time);
+                } catch (e2) {
+                  console.error('[agenda] aviso montado, mas falhou o envio:', e2.message);
+                }
+              } else if (ins.rowCount > 0) {
                 const conf = `📅 Agendado! ${appt.service ? appt.service + ' — ' : ''}${appt.date.split('-').reverse().join('/')} às ${appt.time} (horário de Aracaju). Te mando um lembrete antes, e qualquer ajuste é só me chamar`;
                 await query(`INSERT INTO messages (conversation_id, direction, kind, body)
                              VALUES ($1,'out','text',$2)`, [conversation.id, conf]);
