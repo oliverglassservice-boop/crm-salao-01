@@ -20,6 +20,10 @@
  * v13.15-SALAO: AGENDA REAL NA PERSONA — o server injeta os horários LIVRES
  *       de hoje/amanhã (da tabela appointments); a IA oferece só o que
  *       existe e nunca promete dia fechado/horário ocupado.
+ * v13.16-SALAO: CONDUÇÃO DO AGENDAMENTO — quando a pessoa fala de marcar, a
+ *       atendente informa funcionamento + dias, diz que ela pode escolher
+ *       dia/horário, confere a agenda real e, se ocupado/fechado/fora,
+ *       sugere outra opção NO MESMO DIA ou NO PRÓXIMO. NUNCA horário passado.
  */
 import OpenAI from 'openai';
 
@@ -303,8 +307,12 @@ export async function suggestReply(messages, contactContext = {}) {
   const agendaBlock = contactContext.agenda
     ? `
 
-     AGENDA REAL (horários LIVRES de hoje e amanhã, vindos do sistema): ${contactContext.agenda}
-     Quando oferecer horário, ofereça SÓ horários livres desta lista (ou pergunte a data desejada). Dia marcado "fechado" e horário fora da lista NÃO podem ser prometidos — nesse caso diga que vai conferir a agenda e registre o pedido.`
+     AGENDA REAL (do sistema): ${contactContext.agenda}
+     CONDUÇÃO DO AGENDAMENTO — quando a pessoa falar de marcar, siga NESTA ordem:
+     1. Informe o horário de funcionamento e os dias de atendimento (estão na AGENDA REAL acima) e diga que ela pode ESCOLHER o dia e o horário.
+     2. Com a escolha dela, confira a AGENDA REAL: horário livre → registre o pedido ("anotado!") — o SISTEMA envia a confirmação 📅.
+     3. Horário ocupado, dia fechado ou fora do funcionamento → NÃO prometa: sugira na hora OUTRA opção NO MESMO DIA ou, se o dia não tiver mais vaga, NO PRÓXIMO dia — sempre com os horários livres da AGENDA REAL.
+     4. NUNCA ofereça horário que já passou e NUNCA marque em dia fechado (a trava do sistema avisa e sugere por você).`
     : '';
   const out = await chat(
     BASE,
@@ -375,8 +383,12 @@ export async function parseAppointment(messages, contactName) {
      propõe data e hora claras (ex.: "amanhã às 8h", "dia 17 às 10h") e a
      conversa segue como combinado — proposta da cliente com data+hora JÁ
      vale, o negócio confirma depois. Serviço: o último citado na conversa.
-     Data/hora devem estar no horário de Brasília; resolva "amanhã/hoje/sexta" pela
-     conversa; se a hora não ficar clara, use null. Ano atual: ${new Date().getFullYear()}.`,
+     HORA — convenção do negócio (atende de dia): "1h" a "6h" SEM qualificador
+     são da TARDE (13:00-18:00), nunca da madrugada; "1h da manhã" = 01:00;
+     "15h" = 15:00.
+     DATA — resolva "amanhã/hoje/sexta" pela conversa; dia não citado = hoje se
+     o horário ainda está por vir, senão amanhã; NUNCA data no passado (dia que
+     já passou = próxima ocorrência futura). Ano atual: ${new Date().getFullYear()}.`,
     `Cliente: ${contactName}
      Conversa:
      ${transcript}`,
