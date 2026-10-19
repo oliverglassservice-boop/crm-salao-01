@@ -107,12 +107,22 @@
  *       alucinava horário a partir do contexto). E o LOCAL vence SEMPRE.
  */import express from 'express';
 import path from 'path';
+// --------------------------------------------------------------------------
+// v13.22: (1) FUSO GARANTIDO — TZ Fortaleza no boot (sem TZ no Environment o
+//       servidor pensava em UTC: recusava "hoje" depois das 15h de Fortaleza);
+//       (2) TENTATIVA DUPLA na IA — falha 429/rede não deixa mais mensagem sem
+//       resposta em silêncio (6 mensagens da demo morreram assim).
+// --------------------------------------------------------------------------
 import { fileURLToPath } from 'url';
 import { query, ensureContactAndConversation, migrate, pool } from './db.js';
 import * as ai from './ai.js';
 import * as uazapi from './uazapi.js';
 import * as evolution from './evolution.js';
 import { mountProspect } from './prospect.js';
+
+// v13.22: FUSO GARANTIDO — TZ no Environment vence; sem ele, o servidor pensava
+// em UTC ("hoje" recusado depois das 15h de Fortaleza). ANTES de qualquer Date.
+process.env.TZ = process.env.TZ || 'America/Fortaleza';
 
 /* v13.15 — normaliza a saída do parseAppointment (LLM): "16" → "16:00",
    "18/10" → ISO. Devolve null se não houver data+hora utilizáveis. */
@@ -1005,7 +1015,10 @@ async function waWebhook(req, res) {
         const t0 = Date.now();
         const branding = await loadBranding();
         const agHours = parseHours(branding && branding.hours); // v13.16: funcionamento (formulário → branding)
-        const [intentRaw, suggestion] = await Promise.all([
+        // v13.22: TENTATIVA DUPLA — falha transitória da OpenAI (429/limite de
+        // concorrência/rede) NÃO pode deixar mensagem sem resposta em silêncio
+        // (6 mensagens da demo morreram assim). 2ª tentativa após 1,5s.
+        const gerarIA = async () => Promise.all([
           ai.classifyIntent(body),
           ai.suggestReply(recent, {
             name: contact.name, company: contact.company, is_prospect: isProspect,
@@ -1013,6 +1026,19 @@ async function waWebhook(req, res) {
             agenda: await availabilitySummary(agHours), // v13.16: horários livres reais
           }),
         ]);
+        let intentRaw, suggestion;
+        try {
+          [intentRaw, suggestion] = await gerarIA();
+        } catch (eIA1) {
+          console.error('[ia] 1ª tentativa falhou (', eIA1.message, ') — tentando de novo em 1,5s');
+          await new Promise(r => setTimeout(r, 1500));
+          try {
+            [intentRaw, suggestion] = await gerarIA();
+          } catch (eIA2) {
+            console.error('[ia] ❌ 2ª tentativa falhou — mensagem SEM resposta automática:', eIA2.message);
+            return; // v13.22: sem sugestão não há o que enviar — fim limpo
+          }
+        }
         let intent = intentRaw;
         if (ai.detectEscalation(body)) {
           intent = 'escalacao'; // vence a classificação leve — humano precisa saber
