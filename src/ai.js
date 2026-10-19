@@ -25,6 +25,13 @@
  *       dia/horário, confere a agenda real e, se ocupado/fechado/fora,
  *       sugere outra opção NO MESMO DIA ou NO PRÓXIMO. NUNCA horário passado.
  */
+// --------------------------------------------------------------------------
+// v13.22-SALAO: (1) a MARCA vence SEMPRE — hours/cidade/endereço/dono do painel
+//       sobrepõem o padrão do código (antes: hours FIXO 'terça a sábado' ignorava
+//       app_settings e a IA afirmava dias fechados inexistentes); (2) tabela de
+//       valores usa o catálogo do PAINEL (white-label); (3) FAQ sem dias fechados
+//       inventados — o horário vem da marca.
+// --------------------------------------------------------------------------
 import OpenAI from 'openai';
 
 /* ------------------------------------------------------------------ */
@@ -48,7 +55,14 @@ export const BUSINESS = {
 export function getBusiness(branding = {}) {
   return { ...BUSINESS,
     name: branding.business_name || BUSINESS.name,
-    attendant: branding.attendant_name || BUSINESS.attendant };
+    attendant: branding.attendant_name || BUSINESS.attendant,
+    // v13.22: a marca vence SEMPRE — hours/cidade/endereço/dono do painel
+    // sobrepõem o padrão (antes: hours FIXO 'terça a sábado' ignorava app_settings
+    // e a IA afirmava dias fechados que não existem).
+    owner: branding.owner_name || branding.owner || BUSINESS.owner,
+    city: branding.city || BUSINESS.city,
+    address: branding.address || BUSINESS.address,
+    hours: (branding && branding.hours) || BUSINESS.hours }
 }
 
 /* TABELA DE SERVIÇOS — menu do salão. A Larissa cita valores SÓ quando
@@ -73,7 +87,7 @@ const LGPD_TEXT = { toString: () => (`- "Vocês vendem meus dados para terceiros
 - "De quem vocês compraram meu número? Eu não autorizei contato." — honestidade SEMPRE: NUNCA compramos lista. O contato vem da prospecção própria (encontramos o negócio em fontes públicas, tipo o Google). Se a pessoa não quiser mais contato, sai da lista NA HORA — uma palavra basta ("SAIR" já resolve).
 - "Por que vocês precisam do meu e-mail?" — só para enviar a confirmação do agendamento ou a proposta do pacote; se a pessoa preferir não informar, a conversa continua normalmente sem ele.`) };
 
-const FAQ_TEXT = { toString: () => (`- Horário de funcionamento / atendem domingo: o salão funciona de terça a sábado, das 9h às 19h; domingo e segunda estamos fechados — mas eu (a ${getBusiness().attendant}) respondo e já organizo seu agendamento por aqui, 24h.
+const FAQ_TEXT = { toString: () => (`- Horário de funcionamento / atendem domingo: nosso horário é ${getBusiness().hours} — e fora dele eu (a ${getBusiness().attendant}) respondo (a ${getBusiness().attendant}) respondo e já organizo seu agendamento por aqui, 24h.
 - Endereço / onde vocês ficam / estacionamento: ${getBusiness().address}.
 - Formas de pagamento / aceita Pix: Pix, cartão e dinheiro.
 - Nota fiscal: sim, emitimos NF — é só pedir.
@@ -299,7 +313,7 @@ export async function suggestReply(messages, contactContext = {}) {
     ? `
 
      TABELA DE VALORES (${getBusiness(contactContext.branding).name}) — a pessoa pediu valor: apresente-a LIMPA e SEPARADA (uma linha por item, sem misturar assuntos):
-     ${CATALOG_TEXT}`
+      ${brand.catalog || CATALOG_TEXT}` // v13.22: catálogo do PAINEL (white-label) vence o fixo
     : `
 
      SEM VALORES NESTA RESPOSTA: a pessoa não pediu preço/valor/orçamento — NÃO cite número algum; se sentir curiosidade de valor, ofereça: "quer que eu te mande a tabela de valores?".`;
