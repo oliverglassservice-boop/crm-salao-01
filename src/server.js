@@ -1106,9 +1106,17 @@ async function waWebhook(req, res) {
         const agendHint = /\b(agend\w*|hor[áa]rio\w*|marcar\w*|marcando|encaix\w*|reserv\w*|disponibilidade|amanh[ãa]|segunda|ter[çc]a|quarta|quinta|sexta|s[áa]bado|domingo)\b|\b\d{1,2}\s*(h|hrs|horas)\b/i.test(
           recent.map(m => m.body || '').join(' '));
           const lastInBody = String((recent.filter(m => m.direction === 'in').pop() || {}).body || '');
-          const lastSig = /(agend\w*|marcar\w*|marcando|encaix\w*|reserv\w*|hor[áa]rio|disponibilidade|\bdia\s+\d{1,2}\b|\d{1,2}\/\d{1,2}\b|\b(segunda|ter[çc]a|quarta|quinta|sexta|s[áa]bado|domingo|amanh[ãa]|hoje)\b|\b\d{1,2}\s*(h|hrs|horas)\b|\b\d{1,2}:\d{2}\b|^(sim|ss|s|pode|pode ser|fechado|fechou|quero|bora|vamos)\b)/i.test(lastInBody.trim());
+          // v13.26: APROVAÇÃO CURTA — "sim"/"quero" só abrem a captura em mensagem
+          // curta (≤24 caracteres); "quero saber quem é o presidente dos USA" é
+          // pergunta, não aprovação de horário (antes: reabria e disparava canned).
+          const approvalSig = (/^(sim|ss|s|pode|pode ser|fechado|fechou|quero|bora|vamos)\b/i.test(lastInBody.trim()) && lastInBody.trim().length <= 24);
+          const lastSig = /(agend\w*|marcar\w*|marcando|encaix\w*|reserv\w*|hor[áa]rio|disponibilidade|\bdia\s+\d{1,2}\b|\d{1,2}\/\d{1,2}\b|\b(segunda|ter[çc]a|quarta|quinta|sexta|s[áa]bado|domingo|amanh[ãa]|hoje)\b|\b\d{1,2}\s*(h|hrs|horas)\b|\b\d{1,2}:\d{2}\b)/i.test(lastInBody.trim()) || approvalSig;
           // v13.25: declarado ANTES do gate (o gate o usa; antes: 'lastSig is not defined')
-        if (intent === 'agendamento' || lastSig) { // v13.20: gate na ÚLTIMA mensagem (contexto não re-abre)
+        // v13.26: VETO ANTI-INSISTÊNCIA — reclamação ("pare de forçar agendamento")
+        // NUNCA abre a captura: antes casava "agendamento" e a pessoa recebia o
+        // canned "já está na agenda" sem a IA jamais ler a reclamação.
+        const vetoSig = /\b(pare|para|parar|chega|desisti)\w*\s+(de\s+)?(for[çc]a\w*|insist\w*|mandar|enviar|encher|agend\w*|marcar)|for[çc]ando|insistindo|n[ãa]o\s+(force|for[çc]a|insista|quero\s+agend|precisa\s+agend)/i.test(lastInBody);
+        if (!vetoSig && (intent === 'agendamento' || lastSig)) { // v13.26: veto vence — v13.20: gate na ÚLTIMA mensagem (contexto não re-abre)
           // v13.15: parser LLM + normalização + fallback LOCAL (regex na última
           // mensagem da cliente) + log de captura — nada mais falha em silêncio.
           // v13.20: GATE — a captura só abre quando a PRÓPRIA mensagem pede
