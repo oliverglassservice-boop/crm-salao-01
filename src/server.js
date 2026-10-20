@@ -126,6 +126,15 @@ import path from 'path';
 //       TODA resposta informal fora dele (era o sumiço noturno; o env
 //       AI_WINDOW, se existir, ainda vence).
 // --------------------------------------------------------------------------
+// --------------------------------------------------------------------------
+// v13.25: (1) BUG lastSig — o gate da captura referenciava 'lastSig' ANTES da
+//       declaração (linha perdida na reconstrução v13.20): toda mensagem com
+//       intent diferente de 'agendamento' (preço, informativo) crashava após
+//       gerar a resposta e NUNCA era enviada ('lastSig is not defined' nos logs;
+//       era o sumiço sistemático das perguntas de preço). Declaração movida
+//       para ANTES do gate. (2) exists:false — número inexistente no WhatsApp
+//       (números de teste fictícios) agora gera log claro em vez de críptico.
+// --------------------------------------------------------------------------
 import { fileURLToPath } from 'url';
 import { query, ensureContactAndConversation, migrate, pool } from './db.js';
 import * as ai from './ai.js';
@@ -406,6 +415,9 @@ async function withAiSlot(task) {
     const next = aiQueue.waiters.shift();
     if (next) next();
   }
+// v13.25: WhatsApp responde 400 exists:false para números que não existem
+// (números de teste fictícios / cadastro errado) — log claro em vez de críptico.
+const waNaoExiste = m => /"exists"\s*:\s*false|exists\s*[:=]\s*false/i.test(String(m));
 }
 // v13.9.1: conversas com o MODO TRADUTOR ligado (números). Em memória:
 // reinício do serviço = modo desligado (o aluno liga de novo com 1 comando).
@@ -1093,14 +1105,15 @@ async function waWebhook(req, res) {
         let apptConfirmed = false; // evita mensagem dupla (confirmação 📅 + auto-resposta)
         const agendHint = /\b(agend\w*|hor[áa]rio\w*|marcar\w*|marcando|encaix\w*|reserv\w*|disponibilidade|amanh[ãa]|segunda|ter[çc]a|quarta|quinta|sexta|s[áa]bado|domingo)\b|\b\d{1,2}\s*(h|hrs|horas)\b/i.test(
           recent.map(m => m.body || '').join(' '));
+          const lastInBody = String((recent.filter(m => m.direction === 'in').pop() || {}).body || '');
+          const lastSig = /(agend\w*|marcar\w*|marcando|encaix\w*|reserv\w*|hor[áa]rio|disponibilidade|\bdia\s+\d{1,2}\b|\d{1,2}\/\d{1,2}\b|\b(segunda|ter[çc]a|quarta|quinta|sexta|s[áa]bado|domingo|amanh[ãa]|hoje)\b|\b\d{1,2}\s*(h|hrs|horas)\b|\b\d{1,2}:\d{2}\b|^(sim|ss|s|pode|pode ser|fechado|fechou|quero|bora|vamos)\b)/i.test(lastInBody.trim());
+          // v13.25: declarado ANTES do gate (o gate o usa; antes: 'lastSig is not defined')
         if (intent === 'agendamento' || lastSig) { // v13.20: gate na ÚLTIMA mensagem (contexto não re-abre)
           // v13.15: parser LLM + normalização + fallback LOCAL (regex na última
           // mensagem da cliente) + log de captura — nada mais falha em silêncio.
           // v13.20: GATE — a captura só abre quando a PRÓPRIA mensagem pede
           // agenda (intent) ou traz sinal nela (dia, hora ou aprovação);
           // agradecimento/fecho NÃO re-abre (o LLM alucinava pelo contexto).
-          const lastInBody = String((recent.filter(m => m.direction === 'in').pop() || {}).body || '');
-          const lastSig = /(agend\w*|marcar\w*|marcando|encaix\w*|reserv\w*|hor[áa]rio|disponibilidade|\bdia\s+\d{1,2}\b|\d{1,2}\/\d{1,2}\b|\b(segunda|ter[çc]a|quarta|quinta|sexta|s[áa]bado|domingo|amanh[ãa]|hoje)\b|\b\d{1,2}\s*(h|hrs|horas)\b|\b\d{1,2}:\d{2}\b|^(sim|ss|s|pode|pode ser|fechado|fechou|quero|bora|vamos)\b)/i.test(lastInBody.trim());
           const localAppt = parseApptLocal(lastInBody);
           const apptLLM = normAppt(await ai.parseAppointment(recent, contact.name));
           // v13.20: LOCAL vence SEMPRE (determinístico, à prova de alucinação)
@@ -1134,6 +1147,7 @@ async function waWebhook(req, res) {
                   console.log('[agenda] ⚠ fora do funcionamento — aviso enviado, nada gravado:', appt.date, appt.time);
                 } catch (e2) {
                   console.error('[agenda] aviso montado, mas falhou o envio:', e2.message);
+            if (waNaoExiste(e2.message)) console.error('[wa] ⚠ NÚMERO NÃO EXISTE no WhatsApp (exists:false) — número de teste ou cadastro inválido; sugestão fica no painel p/ envio manual');
                 }
               } else if (ins.rowCount > 0) {
                 const conf = `📅 Agendado! ${appt.service ? appt.service + ' — ' : ''}${appt.date.split('-').reverse().join('/')} às ${appt.time} (horário de Aracaju). Te mando um lembrete antes, e qualquer ajuste é só me chamar`;
@@ -1148,6 +1162,7 @@ async function waWebhook(req, res) {
                   console.log('[agenda] ✅ agendamento gravado e confirmado:', appt.date, appt.time);
                 } catch (e2) {
                   console.error('[agenda] gravado no painel, mas falhou o envio da confirmação:', e2.message);
+                  if (waNaoExiste(e2.message)) console.error('[wa] ⚠ NÚMERO NÃO EXISTE no WhatsApp (exists:false) — número de teste ou cadastro inválido; sugestão fica no painel p/ envio manual');
                 }
               }
             }
@@ -1185,6 +1200,7 @@ async function waWebhook(req, res) {
               } catch (sendErr) {
                 console.error('[auto] ❌ FALHA ao enviar:', sendErr.message,
                   '— sugestão mantida p/ envio manual');
+                if (waNaoExiste(sendErr.message)) console.error('[wa] ⚠ NÚMERO NÃO EXISTE no WhatsApp (exists:false) — sugestão mantida no painel');
               }
             }
           }
