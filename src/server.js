@@ -118,6 +118,14 @@ import path from 'path';
 //       painel) era lida como texto mas computada como "terça a sábado" (padrão),
 //       pois só reconhecia palavras completas: segunda ficava "fechada".
 // --------------------------------------------------------------------------
+// --------------------------------------------------------------------------
+// v13.24: VENDER-READY — (1) FILA GLOBAL DE IA: no máx 2 chamadas OpenAI
+//       simultâneas, espaçadas 900ms, com 3 tentativas (espera 3s/6s) — bursts
+//       de mensagens não estouram mais o rate limit; (2) JANELA DA IA 24h POR
+//       PADRÃO — a persona promete atendimento 24h e o gate 8h-20h engolia
+//       TODA resposta informal fora dele (era o sumiço noturno; o env
+//       AI_WINDOW, se existir, ainda vence).
+// --------------------------------------------------------------------------
 import { fileURLToPath } from 'url';
 import { query, ensureContactAndConversation, migrate, pool } from './db.js';
 import * as ai from './ai.js';
@@ -381,7 +389,24 @@ function requirePanelAuth(req, res, next) {
 /* ---------------- Janela de horário da IA (v11) ----------------
    Resposta automática só dentro desta janela (horário de Aracaju, UTC-3).
    Fora dela, a sugestão fica pronta no painel p/ envio manual. */
-const AI_WINDOW = (process.env.AI_WINDOW || '8-20').split('-').map(Number);
+const AI_WINDOW = (process.env.AI_WINDOW || '0-24').split('-').map(Number); // v13.24: 24h por padrão (env AI_WINDOW ainda vence)
+// v13.24: FILA GLOBAL DE IA — no máx 2 chamadas OpenAI simultâneas (largadas
+// com 900ms de espaçamento). Burst de 5 clientes = 10 chamadas de uma vez
+// estourava o rate limit e matava respostas em silêncio.
+const aiQueue = { running: 0, lastStart: 0, waiters: [] };
+async function withAiSlot(task) {
+  if (aiQueue.running >= 2) await new Promise(r => aiQueue.waiters.push(r));
+  const gap = 900 - Math.min(900, Date.now() - aiQueue.lastStart);
+  if (gap > 0) await new Promise(r => setTimeout(r, gap));
+  aiQueue.lastStart = Date.now();
+  aiQueue.running++;
+  try { return await task(); }
+  finally {
+    aiQueue.running--;
+    const next = aiQueue.waiters.shift();
+    if (next) next();
+  }
+}
 // v13.9.1: conversas com o MODO TRADUTOR ligado (números). Em memória:
 // reinício do serviço = modo desligado (o aluno liga de novo com 1 comando).
 const translatorMode = new Set();
@@ -1032,18 +1057,20 @@ async function waWebhook(req, res) {
             agenda: await availabilitySummary(agHours), // v13.16: horários livres reais
           }),
         ]);
-        let intentRaw, suggestion;
-        try {
-          [intentRaw, suggestion] = await gerarIA();
-        } catch (eIA1) {
-          console.error('[ia] 1ª tentativa falhou (', eIA1.message, ') — tentando de novo em 1,5s');
-          await new Promise(r => setTimeout(r, 1500));
+        let intentRaw, suggestion, lastErrIA = null;
+        for (let tent = 1; tent <= 3; tent++) {
           try {
-            [intentRaw, suggestion] = await gerarIA();
-          } catch (eIA2) {
-            console.error('[ia] ❌ 2ª tentativa falhou — mensagem SEM resposta automática:', eIA2.message);
-            return; // v13.22: sem sugestão não há o que enviar — fim limpo
+            [intentRaw, suggestion] = await withAiSlot(gerarIA);
+            lastErrIA = null; break;
+          } catch (eIA) {
+            lastErrIA = eIA;
+            console.error('[ia] tentativa ' + tent + '/3 falhou (' + eIA.message + ')' + (tent < 3 ? ' — nova tentativa em ' + (tent * 3) + 's' : ''));
+            if (tent < 3) await new Promise(r => setTimeout(r, tent * 3000));
           }
+        }
+        if (lastErrIA) {
+          console.error('[ia] ❌ IA indisponível após 3 tentativas — mensagem ficará sem resposta automática:', lastErrIA.message);
+          return; // v13.24: fim limpo — o log carrega o motivo exato
         }
         let intent = intentRaw;
         if (ai.detectEscalation(body)) {
