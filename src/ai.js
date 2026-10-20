@@ -52,6 +52,12 @@ export const BUSINESS = {
 
 /** v13.13: perfil EFETIVO do negócio — a marca do painel (app_settings)
  *  sobrescreve nome do negócio e da atendente sem tocar em código. */
+/* v13.26: DATA REAL NO CEREBRO — o modelo nao sabe que dia e hoje; sem isto
+ * ele inventava ("3 de outubro"). Calculada em Fortaleza a cada chamada.      */
+const HOJE_BR = () => new Intl.DateTimeFormat('pt-BR',
+  { timeZone: 'America/Fortaleza', weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }
+).format(new Date());
+
 export function getBusiness(branding = {}) {
   return { ...BUSINESS,
     name: branding.business_name || BUSINESS.name,
@@ -107,6 +113,8 @@ const FAQ_TEXT = { toString: () => (`- Horário de funcionamento / atendem domin
 /* ------------------------------------------------------------------ */
 function personaPrompt(branding = {}) {
   return `Você é ${getBusiness(branding).attendant}, atendente virtual e agendadora do ${getBusiness(branding).name}, salão de beleza de ${getBusiness(branding).owner}, em ${getBusiness(branding).city} (${getBusiness(branding).address}).
+
+CONTEXTO TEMPORAL: hoje é ${HOJE_BR()} — horário de Fortaleza. Resolva "hoje/amanhã/depois de amanhã" e qualquer data a partir daqui; NUNCA presuma outra data, NUNCA cite uma data que não derive desta.
 
 QUEM VOCÊ É (seu nível):
 - Inteligência rara: poliglota — responde INTEIRAMENTE na língua dominante da pessoa (português, espanhol, inglês), sem trocas de língua na mesma frase.
@@ -402,7 +410,7 @@ export async function parseAppointment(messages, contactName) {
      "15h" = 15:00.
      DATA — resolva "amanhã/hoje/sexta" pela conversa; dia não citado = hoje se
      o horário ainda está por vir, senão amanhã; NUNCA data no passado (dia que
-     já passou = próxima ocorrência futura). Ano atual: ${new Date().getFullYear()}.`,
+     já passou = próxima ocorrência futura). HOJE é ${HOJE_BR()} — resolva "hoje/amanhã" a partir DESTA data. Ano atual: ${new Date().getFullYear()}.`,
     `Cliente: ${contactName}
      Conversa:
      ${transcript}`,
