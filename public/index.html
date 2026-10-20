@@ -25,7 +25,7 @@ body{font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:#
 .side nav button.active{background:var(--ai);color:#000;font-weight:700;box-shadow:0 4px 14px rgba(201,160,240,.45)}
 .status{margin-top:auto;background:rgba(255,255,255,.08);border-radius:12px;padding:10px 12px;font-size:10.5px;color:#B7AEE8}
 .status .ok{display:block;color:var(--green);font-weight:700;font-size:12px;margin-bottom:2px}
-.maincol{flex:1;min-width:0;display:flex;flex-direction:column}
+.maincol{flex:1;min-width:0;display:flex;flex-direction:column;position:relative;z-index:1}
 .bar{display:flex;align-items:center;gap:16px;padding:18px 26px 0}
 .bar h1{font-size:20px;font-weight:800;color:var(--ink)}
 .bar input{margin-left:auto;width:300px;border:1px solid var(--line);border-radius:999px;padding:9px 16px;font-size:13px;background:#1b1420;outline:none;color:var(--ink);font-family:inherit}
@@ -33,6 +33,9 @@ body{font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:#
 .avatar{width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,#8a5cf6,#c9a0f0);color:#0a0510;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;flex:none}
 main{max-width:1280px;width:100%;margin:0 auto;padding:20px 26px;flex:1}
 footer{max-width:1280px;width:100%;margin:0 auto;padding:6px 26px 22px;text-align:center;color:#6e6580;font-size:11px;letter-spacing:.04em}
+/* v13.26.1: ORQUÍDEA DECORATIVA (canto inferior, como no mockup) — atrás dos cards,
+   sem interação; se /orquidea.png não existir no repo, simplesmente não aparece. */
+.maincol::before{content:"";position:fixed;left:200px;bottom:-50px;width:360px;height:360px;background:url('/orquidea.png') no-repeat left bottom/contain;opacity:.5;pointer-events:none;z-index:-1}
 .view{display:none}.view.active{display:block}
 .kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:18px}
 .kpis5{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:12px}
@@ -104,6 +107,7 @@ pre{white-space:pre-wrap;font-family:inherit;font-size:13px;line-height:1.5}
   .kpis,.kpis5,.kpis4{grid-template-columns:repeat(2,1fr)}.msg{max-width:85%}
   .agd-week{grid-template-columns:repeat(2,1fr)}
   .bar input{display:none}
+  .maincol::before{display:none}
 }
 input[type=color].cfg{width:44px;height:32px;padding:0;border:1px solid var(--line);border-radius:8px;background:none;cursor:pointer}
 .cfgrow{display:flex;align-items:center;gap:10px;margin:8px 0}
