@@ -108,6 +108,11 @@
  */import express from 'express';
 import path from 'path';
 // --------------------------------------------------------------------------
+// v13.26.1: (1) SERVIÇO na agenda — parser local (data/hora) não perde o
+//       serviço: local → LLM → catálogo do painel (guessService). (2) FUNIL
+//       AUTOMÁTICO — agendamento gravado cria/atualiza negócio no Kanban
+//       ('novo', 60%, valor do catálogo). (3) nome do WhatsApp preenche
+//       contato sem nome (antes: CLIENTE "—" na agenda).
 // v13.22: (1) FUSO GARANTIDO — TZ Fortaleza no boot (sem TZ no Environment o
 //       servidor pensava em UTC: recusava "hoje" depois das 15h de Fortaleza);
 //       (2) TENTATIVA DUPLA na IA — falha 429/rede não deixa mais mensagem sem
@@ -162,6 +167,28 @@ function normAppt(a) {
   const h = String(H).padStart(2, '0') + ':' + (hm[2] || '0').padStart(2, '0');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || !/^\d{2}:\d{2}$/.test(h)) return null;
   return { date: d, time: h, service: a.service || null };
+}
+
+/* v13.26.1 — CATÁLOGO DO PAINEL como fonte de serviço+preço. */
+const priceToCents = s => { const n = String(s).replace(/\./g, '').replace(',', '.').replace(/[^\d.]/g, ''); const f = parseFloat(n); return isNaN(f) ? null : Math.round(f * 100); };
+function catalogItems(branding) {
+  const out = [];
+  String((branding && branding.catalog) || '').split(/\n+/).forEach(l => {
+    const m = l.replace(/^[-•*\s]+/, '').match(/^(.+?)\s*[—–-]\s*R?\$?\s*([\d.,]+)/i);
+    if (m && m[1].trim()) out.push({ item: m[1].trim(), cents: priceToCents(m[2]) });
+    else if (l.trim()) out.push({ item: l.trim(), cents: null });
+  });
+  return out;
+}
+function guessService(text, branding) {
+  const t = String(text || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  if (!t) return null;
+  let best = null;
+  for (const it of catalogItems(branding)) {
+    const n = it.item.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    if (n.length >= 3 && t.includes(n) && (!best || n.length > best.n.length)) best = { ...it, n };
+  }
+  return best ? { service: best.item, cents: best.cents } : null;
 }
 
 /* v13.15 — fallback SEM LLM: regex na ÚLTIMA mensagem da cliente.
@@ -641,6 +668,8 @@ app.post('/api/appointments', requirePanelAuth, async (req, res) => {
     if (!ct) ct = (await query(
       `INSERT INTO contacts (wa_id, name) VALUES ($1,$2) RETURNING id`,
       [b.wa_id, String(b.name).slice(0, 120)])).rows[0];
+    else if (b.name) await query(`UPDATE contacts SET name = $2 WHERE id = $1 AND (name IS NULL OR name = '')`,
+      [ct.id, String(b.name).slice(0, 120)]); // v13.26.1: perfil do WhatsApp preenche contato sem nome
     let cv = (await query(
       `SELECT id FROM conversations WHERE contact_id = $1 ORDER BY id DESC LIMIT 1`,
       [ct.id])).rows[0];
@@ -1124,8 +1153,13 @@ async function waWebhook(req, res) {
           // agradecimento/fecho NÃO re-abre (o LLM alucinava pelo contexto).
           const localAppt = parseApptLocal(lastInBody);
           const apptLLM = normAppt(await ai.parseAppointment(recent, contact.name));
-          // v13.20: LOCAL vence SEMPRE (determinístico, à prova de alucinação)
-          const appt = localAppt || apptLLM;
+          // v13.26.1: LOCAL vence para DATA/HORA (à prova de alucinação); o
+          // SERVIÇO vem de onde aparecer: parser local → LLM → catálogo do
+          // painel. Antes: local vencia SEM serviço → agenda com SERVIÇO "—".
+          const guess = localAppt ? guessService(lastInBody, branding) : null;
+          const appt = localAppt
+            ? { ...localAppt, service: localAppt.service || (apptLLM && apptLLM.service) || (guess && guess.service) || null }
+            : apptLLM;
           console.log(`[agenda] captura avaliada (conv ${conversation.id}): intent=${intent} hint=${agendHint} parse=${appt ? appt.date + ' ' + appt.time : 'null'}`);
           if (appt) {
             const slot = new Date(`${appt.date}T${appt.time}:00-03:00`); // horário de Aracaju
@@ -1158,6 +1192,24 @@ async function waWebhook(req, res) {
             if (waNaoExiste(e2.message)) console.error('[wa] ⚠ NÚMERO NÃO EXISTE no WhatsApp (exists:false) — número de teste ou cadastro inválido; sugestão fica no painel p/ envio manual');
                 }
               } else if (ins.rowCount > 0) {
+                // v13.26.1: FUNIL AUTOMÁTICO — agendamento gravado vira negócio
+                // no Kanban ('novo', 60% de chance, valor do catálogo). Falha
+                // aqui NUNCA derruba a agenda (try/catch).
+                try {
+                  const dealPrice = (guess && guess.service === appt.service) ? guess.cents : null;
+                  const exist = await query(
+                    `SELECT id FROM deals WHERE contact_id = $1 AND stage NOT IN ('ganho','perdido') ORDER BY id LIMIT 1`,
+                    [contact.id]);
+                  if (exist.rowCount > 0) {
+                    await query(`UPDATE deals SET title = $2, value_cents = COALESCE($3, value_cents), updated_at = now() WHERE id = $1`,
+                      [exist.rows[0].id, appt.service || 'Atendimento', dealPrice]);
+                    console.log('[funil] negócio atualizado:', appt.service, dealPrice != null ? 'R$ ' + (dealPrice/100) : '');
+                  } else {
+                    await query(`INSERT INTO deals (contact_id, title, value_cents, probability, stage) VALUES ($1,$2,$3,60,'novo')`,
+                      [contact.id, appt.service || 'Atendimento', dealPrice]);
+                    console.log('[funil] negócio criado no Funil:', appt.service, dealPrice != null ? 'R$ ' + (dealPrice/100) : '');
+                  }
+                } catch (eF) { console.error('[funil] falhou (não bloqueia agenda):', eF.message); }
                 const conf = `📅 Agendado! ${appt.service ? appt.service + ' — ' : ''}${appt.date.split('-').reverse().join('/')} às ${appt.time} (horário de Aracaju). Te mando um lembrete antes, e qualquer ajuste é só me chamar`;
                 await query(`INSERT INTO messages (conversation_id, direction, kind, body)
                              VALUES ($1,'out','text',$2)`, [conversation.id, conf]);
