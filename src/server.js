@@ -113,6 +113,11 @@ import path from 'path';
 //       (2) TENTATIVA DUPLA na IA — falha 429/rede não deixa mais mensagem sem
 //       resposta em silêncio (6 mensagens da demo morreram assim).
 // --------------------------------------------------------------------------
+// --------------------------------------------------------------------------
+// v13.23: parseHours entende DIAS ABREVIADOS — "seg a sáb, 9h às 18h" (marca do
+//       painel) era lida como texto mas computada como "terça a sábado" (padrão),
+//       pois só reconhecia palavras completas: segunda ficava "fechada".
+// --------------------------------------------------------------------------
 import { fileURLToPath } from 'url';
 import { query, ensureContactAndConversation, migrate, pool } from './db.js';
 import * as ai from './ai.js';
@@ -206,14 +211,15 @@ function parseHours(s) {
   const out = { days: [2, 3, 4, 5, 6], open: '09:00', close: '19:00', text: String(s || '').trim() || 'terça a sábado, das 9h às 19h' };
   const t = String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   if (!t) return out;
-  const DAY = { domingo: 0, segunda: 1, terca: 2, quarta: 3, quinta: 4, sexta: 5, sabado: 6 };
+  // v13.23: abreviações (seg a sáb) —  impede casar dentro de palavra maior ("ter" não pega "terca")
+  const DAY = { domingo: 0, dom: 0, segunda: 1, seg: 1, terca: 2, ter: 2, quarta: 3, qua: 3, quinta: 4, qui: 4, sexta: 5, sex: 5, sabado: 6, sab: 6 };
   if (/24\s*h|24 horas/.test(t)) { out.days = [0, 1, 2, 3, 4, 5, 6]; out.open = '00:00'; out.close = '23:59'; return out; }
   if (/todos os dias|todos dias|segunda a domingo/.test(t)) out.days = [0, 1, 2, 3, 4, 5, 6];
   else {
-    const m = t.match(/\b(segunda|terca|quarta|quinta|sexta|sabado|domingo)\s*(?:a|ate|-)\s*(segunda|terca|quarta|quinta|sexta|sabado|domingo)\b/);
+const m = t.match(/\b(segunda|terca|quarta|quinta|sexta|sabado|domingo|seg|ter|qua|qui|sex|sab|dom)\s*(?:a|ate|-)\s*(segunda|terca|quarta|quinta|sexta|sabado|domingo|seg|ter|qua|qui|sex|sab|dom)\b/); // v13.23
     if (m) { const a = DAY[m[1]], b = DAY[m[2]]; out.days = []; for (let d = a; ; d = (d + 1) % 7) { out.days.push(d); if (d === b) break; } }
     else {
-      const found = [...t.matchAll(/\b(segunda|terca|quarta|quinta|sexta|sabado|domingo)s?\b/g)].map(x => DAY[x[1]]);
+const found = [...t.matchAll(/\b(segunda|terca|quarta|quinta|sexta|sabado|domingo|seg|ter|qua|qui|sex|sab|dom)s?\b/g)].map(x => DAY[x[1]]); // v13.23
       if (found.length) out.days = [...new Set(found)].sort((a, b) => a - b);
     }
   }
