@@ -48,12 +48,12 @@ footer{max-width:1280px;width:100%;margin:0 auto;padding:6px 26px 22px;text-alig
 .kanban{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
 .col{background:#120b18;border:1px solid var(--line);border-radius:16px;padding:10px;min-height:120px}
 .col b{font-size:12px;display:block;padding:4px 6px 10px;color:#a99bc4}
-.deal{background:#1b1420;border:1px solid var(--line);border-radius:12px;padding:11px 13px;margin-bottom:9px;width:100%;text-align:left;cursor:pointer;font:inherit;color:inherit;box-shadow:0 2px 8px rgba(0,0,0,.05);transition:border-color .15s,transform .15s}
+.deal{background:#181022;border:1px solid #2c2136;border-radius:12px;padding:11px 74px 11px 13px;margin-bottom:9px;width:100%;text-align:left;cursor:pointer;font:inherit;color:inherit;box-shadow:0 2px 8px rgba(0,0,0,.05);transition:border-color .15s,transform .15s;position:relative}
 .deal:hover{border-color:var(--ai);transform:translateY(-1px)}
 .deal b{font-size:13px;display:block;color:var(--ink)}
 .deal small{color:var(--muted);display:block;margin:3px 0 7px}
-.deal .v{font-weight:700;font-size:12.5px}
-.deal .p{float:right;font-weight:700;color:var(--ai-deep)}
+.deal .v{position:absolute;top:10px;right:11px;background:var(--ai);color:#000;border-radius:8px;padding:2px 8px;font-weight:800;font-size:11.5px}
+.deal .p{display:block;margin-top:5px;color:var(--muted);font-size:11px;font-weight:600}
 table{width:100%;border-collapse:collapse}
 th{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);text-align:left;padding:10px 18px;border-bottom:1px solid var(--line)}
 td{padding:11px 18px;border-bottom:1px solid #241b2e;font-size:13px}
@@ -156,9 +156,9 @@ input[type=color].cfg{width:44px;height:32px;padding:0;border:1px solid var(--li
 <main>
   <section class="view active" id="v-funil">
     <div class="kpis">
-      <div class="kpi"><div class="l">Negócios abertos</div><div class="v" id="k-deals">–</div></div>
-      <div class="kpi"><div class="l">Pipeline total</div><div class="v" id="k-pipe">–</div></div>
-      <div class="kpi"><div class="l">Pipeline ponderado (IA)</div><div class="v" id="k-weighted">–</div></div>
+      <div class="kpi"><div class="l">💼 Negócios abertos</div><div class="v" id="k-deals">–</div></div>
+      <div class="kpi"><div class="l">💲 Pipeline total</div><div class="v" id="k-pipe">–</div></div>
+      <div class="kpi"><div class="l">🧠 Pipeline ponderado (IA)</div><div class="v" id="k-weighted">–</div></div>
     </div>
     <div class="kanban" id="kanban"></div>
   </section>
@@ -189,8 +189,8 @@ input[type=color].cfg{width:44px;height:32px;padding:0;border:1px solid var(--li
           </div>
           <div class="row" style="margin-top:8px">
             <input type="text" id="ag-service" placeholder="Serviço (ex.: Coloração, Corte, Hidratação…)">
-            <input type="datetime-local" id="ag-when" style="border:1px solid var(--line);border-radius:22px;padding:10px 15px;font-size:13.5px;outline:none;background:#FAF9FE;color:var(--ink);font-family:inherit">
-            <select id="ag-status" style="border:1px solid var(--line);border-radius:22px;padding:10px 12px;font-size:13px;background:#FAF9FE;color:var(--ink);font-family:inherit;outline:none"><option value="pendente">Pendente</option><option value="confirmado">Confirmado</option></select>
+            <input type="datetime-local" id="ag-when" style="border:1px solid var(--line);border-radius:22px;padding:10px 15px;font-size:13.5px;outline:none;background:#150e1c;color:var(--ink);font-family:inherit">
+            <select id="ag-status" style="border:1px solid var(--line);border-radius:22px;padding:10px 12px;font-size:13px;background:#150e1c;color:var(--ink);font-family:inherit;outline:none"><option value="pendente">Pendente</option><option value="confirmado">Confirmado</option></select>
             <button class="btn btn-ai" id="agAdd">Agendar</button>
           </div>
           <p class="muted" style="margin-top:8px">Se o cliente for novo, o contato e a conversa nascem aqui. Lembretes D-1 e 2h antes saem sozinhos. 😉</p>
@@ -247,7 +247,7 @@ input[type=color].cfg{width:44px;height:32px;padding:0;border:1px solid var(--li
     </div>
       <div class="inner">
         <textarea id="tpl"></textarea>
-        <input type="text" id="tplImg" placeholder="URL da imagem para anexar no disparo (opcional — ex.: https://…/proposta-b.jpg). Vazia = envia só texto." style="width:100%;margin-top:8px;border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:13px;outline:none;background:#FAF9FE;color:var(--ink);font-family:inherit">
+        <input type="text" id="tplImg" placeholder="URL da imagem para anexar no disparo (opcional — ex.: https://…/proposta-b.jpg). Vazia = envia só texto." style="width:100%;margin-top:8px;border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:13px;outline:none;background:#150e1c;color:var(--ink);font-family:inherit">
         <div class="row" style="margin-top:8px">
           <button class="btn" id="btnTpl">Salvar mensagem</button>
           <button class="btn btn-gray" id="btnReloadProsp">Recarregar</button>
@@ -306,10 +306,10 @@ input[type=color].cfg{width:44px;height:32px;padding:0;border:1px solid var(--li
       <div class="cfgrow"><label>Nome da atendente (IA)</label><input type="text" id="cfg-attendant" placeholder="Flor"></div>
       <div class="cfgrow"><label>Mensagem de boas-vindas</label><textarea id="cfg-welcome" placeholder="Oi! Você está no Salão Dona Flor 💅 Como posso te ajudar hoje?"></textarea></div>
       <div class="cfgrow"><label>Persona extra da IA</label><textarea id="cfg-persona" placeholder="Ex.: especialista profissional em salão de beleza, experiente em colorimetria e visagismo…"></textarea></div>
-      <div class="cfgrow"><label>Cor primária</label><input type="color" class="cfg" id="cfg-ai" value="#7C5CFF"><input type="text" id="cfg-ai-hex" value="#7C5CFF" style="width:110px;border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-family:monospace"></div>
-      <div class="cfgrow"><label>Cor da sidebar (topo)</label><input type="color" class="cfg" id="cfg-side" value="#17133A"><input type="text" id="cfg-side-hex" value="#17133A" style="width:110px;border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-family:monospace"></div>
-      <div class="cfgrow"><label>Cor da sidebar (rodapé)</label><input type="color" class="cfg" id="cfg-side2" value="#231C55"><input type="text" id="cfg-side2-hex" value="#231C55" style="width:110px;border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-family:monospace"></div>
-      <div class="cfgrow"><label>Fundo da tela</label><input type="color" class="cfg" id="cfg-bg" value="#F4F2FB"><input type="text" id="cfg-bg-hex" value="#F4F2FB" style="width:110px;border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-family:monospace"></div>
+      <div class="cfgrow"><label>Cor primária</label><input type="color" class="cfg" id="cfg-ai" value="#C9A0F0"><input type="text" id="cfg-ai-hex" value="#C9A0F0" style="width:110px;border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-family:monospace"></div>
+      <div class="cfgrow"><label>Cor da sidebar (topo)</label><input type="color" class="cfg" id="cfg-side" value="#0A0510"><input type="text" id="cfg-side-hex" value="#0A0510" style="width:110px;border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-family:monospace"></div>
+      <div class="cfgrow"><label>Cor da sidebar (rodapé)</label><input type="color" class="cfg" id="cfg-side2" value="#151021"><input type="text" id="cfg-side2-hex" value="#151021" style="width:110px;border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-family:monospace"></div>
+      <div class="cfgrow"><label>Fundo da tela</label><input type="color" class="cfg" id="cfg-bg" value="#0D0714"><input type="text" id="cfg-bg-hex" value="#0D0714" style="width:110px;border:1px solid var(--line);border-radius:8px;padding:7px 10px;font-family:monospace"></div>
       <div class="cfgrow"><label>Importar do formulário</label><input type="file" id="cfg-import-file" accept=".json,application/json" style="font-size:13px;color:var(--muted);max-width:230px"><button id="cfgImport" style="background:var(--ai);color:#000;border:none;border-radius:999px;padding:10px 20px;font-weight:700;cursor:pointer">📥 Importar configuração</button><span id="cfgImportStatus" style="font-size:13px;color:var(--muted)"></span></div>
       <div class="cfgrow"><label></label><button id="cfgSave" style="background:var(--ai);color:#000;border:none;border-radius:999px;padding:10px 24px;font-weight:700;cursor:pointer">💾 Salvar marca</button><span id="cfgStatus" style="font-size:13px;color:var(--muted)"></span></div>
     </div>
@@ -368,7 +368,7 @@ async function loadFunil(){
       col.innerHTML = `<b>${STAGES[st]} · ${open.filter(d=>d.stage===st).length}</b>`;
       open.filter(d=>d.stage===st).forEach(d=>{
         const el = document.createElement('button'); el.className='deal';
-        el.innerHTML = `<span class="p">${d.probability||0}%</span><b>${d.title}</b><small>${d.contact_name||''} · ${d.company||''}</small><span class="v">${fmt(d.value_cents)}</span>`;
+        el.innerHTML = `<b>👤 ${d.title}</b><small>✂ ${[d.contact_name,d.company].filter(Boolean).join(' · ')}</small><span class="v">${fmt(d.value_cents)}</span><span class="p">📌 ${d.probability||0}% de chance</span>`;
         el.onclick = async () => {
           const next = Object.keys(STAGES)[(Object.keys(STAGES).indexOf(d.stage)+1) % Object.keys(STAGES).length];
           if (confirm(`Mover "${d.title}" para ${STAGES[next]}?`)) { await j(`/api/deals/${d.id}`,{body:{stage:next}}); loadFunil(); }
