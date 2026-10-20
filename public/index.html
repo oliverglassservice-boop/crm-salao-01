@@ -35,7 +35,7 @@ main{max-width:1280px;width:100%;margin:0 auto;padding:20px 26px;flex:1}
 footer{max-width:1280px;width:100%;margin:0 auto;padding:6px 26px 22px;text-align:center;color:#6e6580;font-size:11px;letter-spacing:.04em}
 /* v13.26.1: ORQUÍDEA DECORATIVA (canto inferior, como no mockup) — atrás dos cards,
    sem interação; se /orquidea.png não existir no repo, simplesmente não aparece. */
-.maincol::before{content:"";position:fixed;left:200px;bottom:-50px;width:360px;height:360px;background:url('/orquidea.png') no-repeat left bottom/contain;opacity:.5;pointer-events:none;z-index:-1}
+.maincol::before{content:"";position:fixed;right:-30px;bottom:-70px;width:440px;height:440px;background:url('/orquidea.png') no-repeat right bottom/contain;opacity:.55;pointer-events:none;z-index:-1;-webkit-mask-image:radial-gradient(ellipse 70% 70% at 58% 62%,#000 42%,transparent 76%);mask-image:radial-gradient(ellipse 70% 70% at 58% 62%,#000 42%,transparent 76%)}
 .view{display:none}.view.active{display:block}
 .kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:18px}
 .kpis5{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:12px}
